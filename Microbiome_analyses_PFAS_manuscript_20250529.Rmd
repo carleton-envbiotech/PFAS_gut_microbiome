@@ -1,0 +1,476 @@
+---
+title: "Microbiome community analyses for Sierra's manuscript"
+output: html_notebook
+editor_options: 
+  chunk_output_type: inline
+---
+
+# Package requires
+
+Load all of these packages to reproduce the figures associated with the short term incubation PFAS manuscript.
+```{r}
+library(tidyverse)
+library(qiime2R)
+library(ggrepel)
+library(plotly)
+library(data.table)
+library(glue)
+library(ggh4x) #packages for making nested facets
+library(ggtext)
+```
+
+# Figure 3: Beta and alpha diversity analyses
+
+1. Load the metadata file into R using the read delimited command, which defaults to reading tab-delimited files. The same metadata file should be used regardless of the taxonomic data base being used. Be sure to rename the ID files and manually inspect all data frames to ensure they have a unique sample identifier that can be used to join the dataframes downstream.
+```{r}
+metadata<- read.delim("Shortterm_microbes_metadata_tab.tsv", dec = ".") %>% #input file of metadata used in ampliseq here
+           dplyr::mutate(sampleID = dplyr::recode(sampleID, 
+                                    'SP_F1' = "A",
+                                    'SP_F2' = "B",
+                                    'SP_F3' = "C",
+                                    'SP_M1' = "D",
+                                    'SP_M2' = "E",
+                                    'SP_M3' = "F"))
+```
+
+2. Load the QIIME2 artefacts (.qza files) using the read_qza command from the qiime2R package to bring in the unweighted UniFrac ordination, the weighted UniFrac ordination, and the alpha diversity data contained within the shannon_vector.qza
+```{r}
+#Load ordination data and alpha diversity data renaming files as needed
+uwunifrac_gg2<-read_qza("unweighted_unifrac_pcoa_results.qza")
+wunifrac_gg2<-read_qza("weighted_unifrac_pcoa_results.qza")
+shannon_gg2<-read_qza("shannon_vector.qza")$data %>% rownames_to_column("sampleID") %>%
+             dplyr::mutate(sampleID = dplyr::recode(sampleID, 
+                                    'SP_F1' = "A",
+                                    'SP_F2' = "B",
+                                    'SP_F3' = "C",
+                                    'SP_M1' = "D",
+                                    'SP_M2' = "E",
+                                    'SP_M3' = "F"))
+```
+
+3. Perform sanity check to see if the data was imported properly using a venn diagram to see if all the samples listed in the metadata file have a shannon diversity measurement. Keep in mind, the samples kept for downstream diversity analyses will be affected by the rarefaction depth set.
+```{r}
+library(gplots)
+gplots::venn(list(metadata=metadata$sampleID, shannon=shannon_gg2$sampleID)) 
+```
+**Observations**: 
+
+4. Prior to creating static PCoA plots, the proportion of variance explained by axes 1 and 2 in the unweighted unifrac analyses needs to be manually extracted.
+```{r}
+uwunifrac_gg2_PC1<-signif(uwunifrac_gg2$data$ProportionExplained$PC1, digits = 4)
+uwunifrac_gg2_PC2<-signif(uwunifrac_gg2$data$ProportionExplained$PC2, digits = 4)
+```
+
+5. Create an ordination plot using Unweighted UniFrac measurement to visualize beta diversity.
+```{r}
+#Create visual theme here and edit as needed for presentation purposes
+PCoA_theme<- theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(), 
+               panel.background = element_blank(), axis.line = element_line(colour = "black"),
+               axis.text.x = element_text(color = "black", size = 14),
+               axis.text.y = element_text(color = "black", size = 14),
+               axis.title.x = element_text(color = "black", size = 16),
+               axis.title.y = element_text(color = "black", size = 16),
+               legend.title=element_text(size=16), 
+               legend.text=element_text(size=16),
+               legend.key = element_rect(fill = "white", color = NA),
+               plot.title = element_text(size = 20, face = "bold"),
+               panel.border = element_rect(colour = "black", fill=NA, size=1))
+
+#unweighted unifrac beta diversity ordination visualization script
+uwunifrac_gg2_ordination <-
+  
+  uwunifrac_gg2$data$Vectors %>%
+  dplyr::select(SampleID, PC1, PC2) %>% #different formatting here for sampleID name, convert in next step
+  dplyr::rename(sampleID = SampleID) %>%
+  dplyr::mutate(sampleID = dplyr::recode(sampleID, 
+                                    'SP_F1' = "A",
+                                    'SP_F2' = "B",
+                                    'SP_F3' = "C",
+                                    'SP_M1' = "D",
+                                    'SP_M2' = "E",
+                                    'SP_M3' = "F")) %>%
+  left_join(metadata) %>%
+  left_join(shannon_gg2) %>%
+  dplyr::rename(`Shannon index` = shannon_entropy) %>%
+  ggplot(aes(x=PC1, y=PC2, colour = sex, size = `Shannon index`, label = sampleID)) +
+  geom_point(alpha= 0.8) + #alpha controls transparency and helps when points are overlapping
+  geom_text_repel(aes(label = sampleID), size = 4, colour = "black", fontface = "bold", show.legend = FALSE) +
+  scale_color_brewer(palette = "Dark2", name = "Sample ID") +
+  scale_size_continuous(range = c(4, 6)) + #use this to set scales on the min and max of the shannon index
+  labs(title = "Unweighted UniFrac for 16S sequences from 
+  starting material for 6:2 diPAP incubations", 
+       x = paste(paste("PC1", uwunifrac_gg2_PC1*100), "%"), y = paste(paste("PC2", uwunifrac_gg2_PC2*100), "%")) +
+  PCoA_theme +
+  guides(colour = guide_legend(override.aes = list(size=6)))
+
+uwunifrac_gg2_ordination  
+
+ggplotly(uwunifrac_gg2_ordination)
+ggsave("Fig3A_PFAS_short_term_incubations_unweighted_UniFrac_GreenGenes2_DG_20250529.pdf", dpi = 300, height=6, width=8, device="pdf")
+ggsave("Fig3A_PFAS_short_term_incubations_unweighted_UniFrac_GreenGenes2_DG_20250529.jpg", dpi = 300, height=6, width=8, device="jpeg")
+ggsave("Fig3A_PFAS_short_term_incubations_unweighted_UniFrac_GreenGenes2_DG_20250529.png", dpi = 300, height=6, width=8, device="png")
+```
+6. Retrieve the PC values for the axes from the *weighted* unifrac data.
+```{r}
+wunifrac_gg2_PC1<-signif(wunifrac_gg2$data$ProportionExplained$PC1, digits = 4)
+wunifrac_gg2_PC2<-signif(wunifrac_gg2$data$ProportionExplained$PC2, digits = 4)
+```
+
+7. Repeat the ordination above but using the *weighted* unifrac data,
+```{r}
+#Create visual theme here and edit as needed for presentation purposes
+PCoA_theme<- theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(), 
+               panel.background = element_blank(), axis.line = element_line(colour = "black"),
+               axis.text.x = element_text(color = "black", size = 14),
+               axis.text.y = element_text(color = "black", size = 14),
+               axis.title.x = element_text(color = "black", size = 16),
+               axis.title.y = element_text(color = "black", size = 16),
+               legend.title=element_text(size=16), 
+               legend.text=element_text(size=16),
+               legend.key = element_rect(fill = "white", color = NA),
+               plot.title = element_text(size = 20, face = "bold"),
+               panel.border = element_rect(colour = "black", fill=NA, size=1))
+
+#unweighted unifrac beta diversity ordination visualization script
+wunifrac_gg2_ordination <-
+  
+  wunifrac_gg2$data$Vectors %>%
+  dplyr::select(SampleID, PC1, PC2) %>% #different formatting here for sampleID name, convert in next step
+  dplyr::rename(sampleID = SampleID) %>%
+  dplyr::mutate(sampleID = dplyr::recode(sampleID, 
+                                    'SP_F1' = "A",
+                                    'SP_F2' = "B",
+                                    'SP_F3' = "C",
+                                    'SP_M1' = "D",
+                                    'SP_M2' = "E",
+                                    'SP_M3' = "F")) %>%
+  left_join(metadata) %>%
+  left_join(shannon_gg2) %>%
+  dplyr::rename(`Shannon index` = shannon_entropy) %>%
+  ggplot(aes(x=PC1, y=PC2, colour = sex, size = `Shannon index`, label = sampleID)) +
+  geom_point(alpha= 0.8) + #alpha controls transparency and helps when points are overlapping
+  geom_text_repel(aes(label = sampleID), size = 4, colour = "black", fontface = "bold", show.legend = FALSE) +
+  scale_color_brewer(palette = "Dark2", name = "Sample ID") +
+  scale_size_continuous(range = c(4, 6)) + #use this to set scales on the min and max of the shannon index
+  labs(title = "Weighted UniFrac for 16S sequences from 
+  starting material for 6:2 diPAP incubations", 
+       x = paste(paste("PC1", wunifrac_gg2_PC1*100), "%"), y = paste(paste("PC2", wunifrac_gg2_PC2*100), "%")) +
+  PCoA_theme +
+  guides(colour = guide_legend(override.aes = list(size=6)))
+
+wunifrac_gg2_ordination  
+
+ggplotly(wunifrac_gg2_ordination)
+ggsave("Fig3B_PFAS_short_term_incubations_weighted_UniFrac_GreenGenes2_DG_20250529.pdf", dpi = 300, height=6, width=8, device="pdf")
+ggsave("Fig3B_PFAS_short_term_incubations_weighted_UniFrac_GreenGenes2_DG_20250529.jpg", dpi = 300, height=6, width=8, device="jpeg")
+ggsave("Fig3B_PFAS_short_term_incubations_weighted_UniFrac_GreenGenes2_DG_20250529.png", dpi = 300, height=6, width=8, device="png")
+```
+
+# Figure 4: Relative abundance heatmaps
+
+1. Import the relative abundance table from level 5 in the subdirectory containing the qiime2 outputs. Carry out any renaming and column parsing you need to to separate out desired taxonomic information. Add markdown elements for italicizing in figures downstream.
+```{r}
+greengenes_family_table <- fread("rel-table-5.tsv", sep = "\t", header = "auto")
+greengenes_family_table <- greengenes_family_table %>% 
+                           dplyr::rename(classification = `#OTU ID`) %>%
+                           separate(classification, 
+                                                     into = c("Kingdom", 
+                                                             "Phylum",
+                                                             "Class",
+                                                             "Order",
+                                                             "Family"), sep = ";") %>%
+                          
+                                            #Phylum
+                                            dplyr::mutate(Phylum = str_replace(string = Phylum,
+                                                              pattern = "p__",
+                                                              replacement = "")) %>%
+                                            dplyr::mutate(Phylum = str_replace(string = Phylum,
+                                                              pattern = "(.*)",
+                                                              replacement = "*\\1*")) %>%
+                                            #Class
+                                            dplyr::mutate(Class = str_replace(string = Class,
+                                                              pattern = "c__",
+                                                              replacement = "")) %>%
+                                            dplyr::mutate(Class = str_replace(string = Class,
+                                                              pattern = "(.*)",
+                                                              replacement = "*\\1*")) %>%
+                
+                                            #Order
+                                            dplyr::mutate(Order = str_replace(string = Order,
+                                                              pattern = "o__",
+                                                              replacement = "")) %>%
+                                            dplyr::mutate(Order = str_replace(string = Order,
+                                                              pattern = "(.*)",
+                                                              replacement = "*\\1*")) %>%
+                
+                                            #Family
+                                            dplyr::mutate(Family = str_replace(string = Family,
+                                                              pattern = "f__",
+                                                              replacement = "")) %>%
+                                            dplyr::mutate(Family = str_replace(string = Family,
+                                                              pattern = "(.*)",
+                                                              replacement = "*\\1*")) %>%
+
+                                            #Unknowns
+                                            dplyr::mutate(Family = str_replace(string = Family, 
+                                                            pattern = "__",
+                                                            replacement = "*Unidentified family*")) %>%
+  
+                                            dplyr::mutate(Phylum = str_replace(string = Phylum, 
+                                                            pattern = "__",
+                                                            replacement = "*Unidentified phylum*")) %>%
+  
+                                            #Generate collated labels
+                                            dplyr::mutate(Phylum_family = glue("{Phylum}, {Family}")) %>%
+                                            relocate(Phylum_family, .after=Family)
+```
+
+2. Filter out any Eukaryotic and Unnassigned sequences and then run the gather function to convert this from a wide to a long data format better suited to data visualization. Use case_when to reproduce the cohort name names originally present in the metadata file alongside any other relevant information.
+```{r}
+#Data clean up and reorganization
+greengenes_family_data_long <- greengenes_family_table %>%
+                               filter(!Kingdom == "Unassigned" & !Kingdom == "d__Eukaryota") %>% #filter out unassigned and eukaryotic sequences
+                               gather(key = `Sample name`, value = `Relative abundance`, "SP_F1":"SP_M3", na.rm=FALSE) %>%
+                               dplyr::mutate(`Relative abundance` = `Relative abundance` *100) %>%
+                               dplyr::mutate(`Sample name` = dplyr::recode(`Sample name`, 
+                                    'SP_F1' = "A",
+                                    'SP_F2' = "B",
+                                    'SP_F3' = "C",
+                                    'SP_M1' = "D",
+                                    'SP_M2' = "E",
+                                    'SP_M3' = "F"))
+
+greengenes_family_data_long_metadata<- greengenes_family_data_long %>%
+                                       #Add sex
+                                       dplyr::mutate(sex = case_when(
+                                              grepl("F", greengenes_family_data_long$`Sample name`) ~ "Female",
+                                              grepl("M", greengenes_family_data_long$`Sample name`) ~ "Male"))
+```
+
+3. Use the geom_tile function ggplot2 to create a heatmap without any cutoff initially. It is best practice to look at the data as is before applying somewhat arbitrary cutoffs to make sure you're considering the entire data set before carrying out manipulations. In this case, we will want to facet along the sampleID variable, which should order itself alphabetically. 
+
+**Note:** Make sure to manually inspect the input data frame to pull out the maximum relative abundance detected across the whole data set to set the upper limit of the colour scale that will be used in the heatmap.
+```{r}
+#Create aesthetic theme
+heatmap_theme<-  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(), 
+                 panel.background = element_blank(), axis.line = element_line(colour = "black"),
+                 axis.text.x = element_text(color = "black", size = 14),
+                 axis.text.y = element_text(color = "black", size = 14),
+                 axis.title.x = element_text(color = "black", size = 16, vjust = -3),
+                 axis.title.y = element_text(color = "black", size = 60, vjust = 3),
+                 legend.title=element_text(size=54, vjust = 2), 
+                 legend.text=element_text(size=54),
+                 legend.key = element_rect(fill = "white", color = NA),
+                 plot.title = element_text(size = 64, face = "bold", hjust = 0.5),
+                 panel.border = element_rect(colour = "black", fill=NA, size=1),
+                 plot.margin = unit(c(2, 2, 2, 2), "cm"))
+
+#Heat map script
+greengenes_family_heatmap_no_cutoff <-  greengenes_family_data_long_metadata %>%
+                                        mutate_at(c('Relative abundance'), ~na_if(., 0)) %>% #convert 0 to NA to facilitate visualization
+                                        filter(!is.na(`Relative abundance`)) %>% #need to re add this filter for it to work
+                                        ggplot(aes(x= `Sample name`, y = reorder(Phylum_family, `Relative abundance`), fill= `Relative abundance`)) +
+                                        geom_tile(aes()) + 
+                                        facet_grid(~`Sample name`, scales = "free", space = "free") +
+                                        theme(axis.text.x=element_text(angle=0, hjust=1),
+                                        axis.title.y = element_text(color = "black", size = 24, vjust = 0),
+                                        legend.key.size = unit(2, 'cm'))+
+                                        scale_fill_viridis_c(name="Relative abundance (%)", 
+                                                            na.value = "white", limits = c(0, 75)) + #set to max relative abundance rounded up
+                                        labs(title = "Relative abundance of families detected via 16S sequencing in starting material for 6:2 diPAP incubations",
+                                        x = "Sample ID" , y = "Phylum, family name") +
+                                        heatmap_theme +
+                                        theme(axis.text.x = element_blank(),
+                                              axis.text.y = element_markdown(size = 54, face = "bold"),
+                                              axis.title.x = element_blank(),
+                                              strip.text.x = element_text(color = "black", size = 60, face = "bold"))
+
+greengenes_family_heatmap_no_cutoff
+ggsave("Fig4_PFAS_incubations_family_relative_abundance_greengenes_no_cutoff_20250529.pdf", dpi = 300, height=80, width=60, device="pdf", limitsize = FALSE)
+ggsave("Fig4_PFAS_incubations_family_relative_abundance_greengenes_no_cutoff_20250529.jpg", dpi = 300, height=80, width=60, device="jpeg", limitsize = FALSE)
+ggsave("Fig4_PFAS_incubations_family_relative_abundance_greengenes_no_cutoff_20250529.png", dpi = 300, height=80, width=60, device="png", limitsize = FALSE)
+```
+
+# Generate relative abundance heatmaps for chlorinated solvent degrading bacteria and PFAS degrading bacteria genera
+
+1. Create vectors for known dehalogenating taxa and known PFAS transforming taxa. Dehalogenating taxa were taken from a previous compilation effort by DSG with abbreviated references provided as comments. PFAS transforming taxa were mainly taken from Tables 1A through 1D from:
+
+Bacterial degradation of perfluoroalkyl acids,
+Current Opinion in Biotechnology,
+Volume 88,
+2024,
+103170,
+ISSN 0958-1669,
+https://doi.org/10.1016/j.copbio.2024.103170.
+(https://www.sciencedirect.com/science/article/pii/S095816692400106X)
+
+Note that we used the most permissive interpretation of the tables in this compilation, which do not always attribute a single strain as the main contributor to the degradation of the fluorinated compound in question. References that only provided phylum level information were ignored.
+
+**Double check this nomenclature is compatible with GreenGenes2**
+```{r}
+#List of dechlorinating taxa
+Dechlorination_genera_vector <- c(
+#Genera taken from Hug et al. 2013, Phil Trans R Soc B 368: 20120322 
+                                  "*Ruegeria*",
+                                  "*Photobacterium*",
+                                  "*Jannaschia*",
+                                  "*Ahrensia*",
+                                  "*Shewanella*",
+                                  "*Vibrio*",
+                                  "*Anaeromyxobacter*",
+                                  "*Geobacter*",
+                                  "*Sulfurospirillum*",
+                                  "*Dehalococcoides*", 
+                                  "*Dehalogenimonas*",
+                                  "*Acidobacterium*",
+                                  "*Dethiobacter*",
+                                  "*Clostridium*", #manually detected, text searching not working because divided into sub genera
+                                  "*Desulfitobacterium*",
+                                  "*Dehalobacter*", #family detected but not genus
+                                  "*Heliobacterium*",
+                                  "*Thermotogales*",
+                                  "*Ferroglobus*",
+                                  
+#Genera added from Table 1 and Figure 2 in Jugder et al. 2016 Front Microbiol 7:249
+                                  "*Desulfomonile*",
+                                  "*Nitratireductor*",
+                                  "*Comamonas*"
+                                  )
+
+#List of PFAS transforming genera
+PFAS_transforming_genera_vector <- c(
+                                     "*Acetobacterium*", #PFMeUPA, sometimes classified as Lachnospiraceae or Clostridiaceae in NCBI
+                                     "*Acidimicrobium*", #PFOA
+                                     "*Bacillus*", #PFOA, one subgenera manually detected
+                                     "*Brevundimonas*", #PFOA
+                                     "*Dechloromonas*", #PFOA
+                                     "*Delftia*", #PFOA
+                                     "*Ensifer*", #PFOS
+                                     "*Hyphomicrobium*", #PFOS
+                                     "*Micromonasporaceae*", #PFOS
+                                     "*Paracoccus*", #PFOS
+                                     "*Phaenerochaete*", #PFOA, PFOS
+                                     "*Pseudomonas*", #PFOA, PFCA, PFOS
+                                     "*Rosebacter*", #PFOS
+                                     "*Stenotrophomonas*" #PFOA
+                                     )
+```
+
+**Note:** I manually searched each name in the Genus table and added comments beside some of the sub genera or unidentified genera with relevant families bearing known dehalogenating functions. Basically, we have an unidentified member of the Dehalobacteriaceae, a family that houses the dehalogenating genus Dehalobacter and some sub genera of Clostridium and Bacillus being picked up. Everything other genera was not detect and some were double checked to make sure this isn't due to inconsistent naming in the GreenGenes 2 database. Re-running the pipeline with SILVA 138 would be required to confirm no issues with nomenclature.
+
+2. Load in the genus level data, clean up the taxonomy column.
+```{r}
+Genus_table <- fread("rel-table-6.tsv", sep = "\t", header = "auto") %>% 
+               dplyr::rename(classification = `#OTU ID`) %>%
+                      separate(classification, 
+                                               into = c("Kingdom", 
+                                                       "Phylum",
+                                                       "Class",
+                                                       "Order",
+                                                       "Family",
+                                                       "Genus"), sep = ";") %>%
+                    
+                                      #Phylum
+                                      dplyr::mutate(Phylum = str_replace(string = Phylum,
+                                                        pattern = "p__",
+                                                        replacement = "")) %>%
+                                      dplyr::mutate(Phylum = str_replace(string = Phylum,
+                                                        pattern = "(.*)",
+                                                        replacement = "*\\1*")) %>%
+                                      #Class
+                                      dplyr::mutate(Class = str_replace(string = Class,
+                                                        pattern = "c__",
+                                                        replacement = "")) %>%
+                                      dplyr::mutate(Class = str_replace(string = Class,
+                                                        pattern = "(.*)",
+                                                        replacement = "*\\1*")) %>%
+          
+                                      #Order
+                                      dplyr::mutate(Order = str_replace(string = Order,
+                                                        pattern = "o__",
+                                                        replacement = "")) %>%
+                                      dplyr::mutate(Order = str_replace(string = Order,
+                                                        pattern = "(.*)",
+                                                        replacement = "*\\1*")) %>%
+          
+                                      #Family
+                                      dplyr::mutate(Family = str_replace(string = Family,
+                                                        pattern = "f__",
+                                                        replacement = "")) %>%
+                                      dplyr::mutate(Family = str_replace(string = Family,
+                                                        pattern = "(.*)",
+                                                        replacement = "*\\1*")) %>%
+  
+                                      #Genus
+                                      dplyr::mutate(Genus = str_replace(string = Genus,
+                                                        pattern = "g__",
+                                                        replacement = "")) %>%
+                                      dplyr::mutate(Genus = str_replace(string = Genus,
+                                                        pattern = "(.*)",
+                                                        replacement = "*\\1*")) %>%
+
+                                      #Unknowns
+                                      dplyr::mutate(Genus = str_replace(string = Genus, 
+                                                      pattern = ("__"),
+                                                      replacement = "*Unidentified genus*")) %>%
+  
+
+                                      dplyr::mutate(Family = str_replace(string = Family, 
+                                                      pattern = "__",
+                                                      replacement = "*Unidentified family*")) %>%
+
+                                      #Generate collated labels
+                                      dplyr::mutate(Family_genus = glue("{Family}, {Genus}")) %>%
+                                      relocate(Family_genus, .after= Genus)
+
+
+Genus_table_long <- Genus_table %>%
+                    filter(!Kingdom == "Unassigned" & !Kingdom == "d__Eukaryota") %>% #filter out unassigned and eukaryotic sequences
+                    gather(key = `Sample name`, value = `Relative abundance`, "SP_F1":"SP_M3", na.rm=FALSE) %>%
+                    dplyr::mutate(`Relative abundance` = `Relative abundance` *100) %>%
+                    dplyr::mutate(`Sample name` = dplyr::recode(`Sample name`, 
+                          'SP_F1' = "A",
+                          'SP_F2' = "B",
+                          'SP_F3' = "C",
+                          'SP_M1' = "D",
+                          'SP_M2' = "E",
+                          'SP_M3' = "F"))
+
+Genus_table_long_metadata<- Genus_table_long %>%
+                           #Add sex
+                            dplyr::mutate(sex = case_when(
+                                   grepl("F", Genus_table_long$`Sample name`) ~ "Female",
+                                   grepl("M", Genus_table_long$`Sample name`) ~ "Male"))
+```
+
+3. Generate a heatmap by filtering the data to only include the genera names in each vector.
+```{r}
+#Heat map script
+Dehalogenating_genus_heatmap_no_cutoff <-  Genus_table_long_metadata %>%
+                                           mutate_at(c('Relative abundance'), ~na_if(., 0)) %>% #convert 0 to NA to facilitate visualization
+                                           filter(!is.na(`Relative abundance`)) %>% #need to re add this filter for it to work
+                                           filter((Genus %in% Dechlorination_genera_vector))%>%
+                                           ggplot(aes(x= `Sample name`, 
+                                                      y = reorder(Genus, `Relative abundance`), 
+                                                      fill= `Relative abundance`)) +
+                                          geom_tile(aes()) + 
+                                          #facet_grid(~`Sample name`, scales = "free", space = "free") +
+                                          theme(axis.text.x=element_text(angle=0, hjust=1),
+                                          axis.title.y = element_text(color = "black", size = 24, vjust = 0),
+                                          legend.key.size = unit(2, 'cm'))+
+                                          scale_fill_viridis_c(name="Relative abundance (%)", 
+                                                              na.value = "white", limits = c(0, 75)) + #set to max relative abundance rounded up
+                                          labs(title = "Relative abundance of genera associated with chlorinated solvent and PFAS transformations detected via 16S sequencing in starting material for 6:2 diPAP incubations",
+                                          x = "Sample ID" , y = "Family, genus name") +
+                                          heatmap_theme +
+                                          theme(axis.text.x = element_blank(),
+                                                axis.text.y = element_markdown(size = 54, face = "bold"),
+                                                axis.title.x = element_blank(),
+                                                strip.text.x = element_text(color = "black", size = 60, face = "bold"))
+
+Dehalogenating_genus_heatmap_no_cutoff
+### heat map is not working because there are no hits within either vector, this was verified with manual searching
+```
+
+
+

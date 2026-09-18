@@ -1,0 +1,2777 @@
+---
+title: "Peskett_et_al_2026_Data-Analysis-and-Bioinformatics"
+output: html_notebook
+editor_options: 
+  chunk_output_type: console
+---
+
+# Set-Up
+
+Load required packages:
+
+```{r}
+library(tidyverse)
+library(car)
+library(lme4)
+library(lmerTest)
+library(DHARMa)
+library(lattice)
+library(ggthemes) # provides a colour-blind safe palette
+library(sjPlot)
+library(decontam)
+library(qiime2R)
+library(phyloseq)
+library(gridExtra)
+library(vegan)
+library(ggpubr)
+library(gplots)
+library(corrplot)
+library(Hmisc)
+library(microViz) # to add variables into phyloseq object
+library(plyr)
+library(data.table)
+library(glue)
+library(ggh4x) #packages for making nested facets
+library(ggtext) #needed for markdown elements
+library(readxl)
+library(glue)
+library(reshape2)
+library(lubridate)
+library(plotly)
+library(ggpmisc)
+library(SQMtools)
+library(Biostrings)
+library(rlang)
+library(patchwork)
+library(wesanderson)
+library(pheatmap)
+```
+
+# Chemistry Analyses and Visualizations
+
+```{r}
+data <- read.csv("Peskett_ChemistryData.csv")
+```
+
+Filter data:
+
+Only include biotic incubations and PFAS added bottles
+
+```{r}
+chemdata <- data %>% 
+  dplyr::filter(PFAS !="No") %>% 
+  dplyr::filter(Incubation != "Abiotic") 
+
+#Make pH a categorical variable:
+chemdata$pH <- as.factor(chemdata$pH)
+```
+
+### diPAP
+
+```{r}
+diPAP <- chemdata %>% 
+  select(1:9, 11) %>% 
+  na.omit()
+
+diPAP1 <- lm(diPAP ~ Participant + pH + Redox + Carbon + Time, data = diPAP)
+summary(diPAP1)
+
+#Check model assumptions:
+
+par(mfrow = c(2,2))
+plot(diPAP1) # Variance increasing 
+
+#Try a log-transformation maybe
+
+diPAP$logdiPAP <- log10(diPAP$diPAP)
+
+diPAP2 <- lm(logdiPAP ~ Participant + pH + Redox + Carbon + Time, data = diPAP)
+summary(diPAP2)
+
+plot(diPAP2) 
+
+```
+
+Interaction - pH and diPAP
+
+```{r}
+diPAP3 <- lm(diPAP ~ pH*Time, data = diPAP)
+summary(diPAP3)
+
+par(mfrow = c(2,2))
+plot(diPAP3)
+
+#Variance increasing - log transform
+
+diPAP4 <- lm(logdiPAP ~ pH*Time, data = diPAP)
+summary(diPAP4)
+
+plot(diPAP4)
+
+```
+
+## monoPAP
+
+```{r}
+monoPAP <- chemdata %>% 
+  select(1:9, 12) %>% 
+  na.omit
+
+monoPAP1 <- lm(monoPAP ~ Participant + pH + Redox + Carbon + Time, data = monoPAP)
+summary(monoPAP1)
+
+#Check model assumptions:
+
+par(mfrow = c(2,2))
+plot(monoPAP1)
+```
+
+## FTOH
+
+Non-parametric
+
+Wilcox t-tests for pH, participant, Redox, and Carbon:
+
+```{r}
+FTOH <- chemdata %>% 
+  select(1:9, 13) %>% 
+  na.omit
+
+# Participant
+
+participant <- wilcox.test(FTOH ~ Participant, data = FTOH, exact = FALSE)
+participant
+
+# pH
+
+pH <- wilcox.test(FTOH ~ pH, data = FTOH, exact = FALSE)
+pH
+
+# Redox
+
+redox <- wilcox.test(FTOH ~ Redox, data = FTOH, exact = FALSE)
+redox
+
+# Carbon
+
+carbon <- wilcox.test(FTOH ~ Carbon, data = FTOH, exact = FALSE)
+carbon
+```
+
+Spearman-rank correlation for time:
+
+```{r}
+time <- cor.test(FTOH$FTOH, FTOH$Time,  method = "spearman")
+time
+```
+
+## PFHxA
+
+Non-parametric
+
+Wilcox t-tests for pH, participant, Redox, and Carbon:
+
+```{r}
+PFHxA <- chemdata %>% 
+  select(1:9, 14) %>% 
+  na.omit
+
+# Participant
+
+participant2 <- wilcox.test(PFHxA ~ Participant, data = PFHxA, exact = FALSE)
+participant2
+
+# pH
+
+pH2 <- wilcox.test(PFHxA ~ pH, data = PFHxA, exact = FALSE)
+pH2
+
+# Redox
+
+redox2 <- wilcox.test(PFHxA ~ Redox, data = PFHxA, exact = FALSE)
+redox2
+
+# Carbon
+
+carbon2 <- wilcox.test(PFHxA ~ Carbon, data = PFHxA, exact = FALSE)
+carbon2
+```
+
+Spearman-rank correlation for time:
+
+```{r}
+time2 <- cor.test(PFHxA$PFHxA, PFHxA$Time,  method = "spearman")
+time2
+```
+
+## Visualizations
+
+### Parent Compounds
+
+#### Abiotic
+
+```{r}
+NormalizedAbiotic <- data %>% 
+  select(1:9, 15:16) %>% 
+  filter(PFAS !="No") %>% #Filer out no PFAS bottles
+  pivot_longer(cols = 10:11,
+               names_to = "Analyte",
+               values_to = "Concentration") %>% 
+  filter(Time %in% c("0", "24", "168")) %>% 
+  filter(Incubation == "Abiotic") %>% 
+  na.omit() %>% 
+  mutate(Analyte = case_when(
+    Analyte == "PFOA_Norm" ~ "PFOA",
+    Analyte == "diPAP_Norm" ~ "diPAP"
+  ))
+```
+
+```{r}
+NormalizedAbiotic$Analyte <- factor(NormalizedAbiotic$Analyte,
+                       levels = c("PFOA", "diPAP"))
+
+plot1 <- ggplot(NormalizedAbiotic, aes(x = Time, y = Concentration, color = Analyte, group = interaction(Analyte,Participant,Bottle_ID))) +
+  geom_line(size = 1, colour = "grey") +
+  geom_point(size = 3.5, colour = "blue") +
+  labs(x = "Time (h)", y = "Normalized Concentration (% of T0)") +
+  facet_grid(~Analyte,
+             scales = "free_y",
+              labeller = labeller(
+      Analyte = c(
+        PFOA = "PFOA",
+        diPAP = "6:2 diPAP"
+      ))) +
+  scale_x_continuous(
+  breaks = c(0, 24, 168),
+  expand=expand_scale(mult=c(0,0.1))) +
+  coord_cartesian(clip = "off") +
+  theme_classic() +
+  theme(axis.title.x = element_text(size = 20, face = "bold")) +
+  theme(axis.title.y = element_text(size = 20, face = "bold")) +
+  theme(strip.text.x = element_text(size = 17, face = "bold")) +
+  theme(strip.text.y = element_text(size = 17, face = "bold")) +
+  theme(axis.text.y = element_text(size = 17)) + 
+  theme(axis.text.x = element_text(size = 17)) +
+  theme(legend.position="none")
+
+plot1
+```
+
+#### Biotic
+
+```{r}
+NormalizedBiotic <- data %>% 
+  select(1:9, 15:16) %>% 
+  filter(PFAS !="No") %>% #Filer out no PFAS bottles
+  pivot_longer(cols = 10:11,
+               names_to = "Analyte",
+               values_to = "Concentration") %>% 
+  filter(Time %in% c("0","72", "168")) %>% 
+  filter(Incubation == "Biotic") %>% 
+  na.omit() %>% 
+  mutate(Analyte = case_when(
+    Analyte == "PFOA_Norm" ~ "PFOA",
+    Analyte == "diPAP_Norm" ~ "diPAP"
+  ))
+```
+
+```{r}
+NormalizedBiotic$Analyte <- factor(NormalizedBiotic$Analyte,
+                       levels = c("PFOA", "diPAP"))
+
+plot2 <- ggplot(NormalizedBiotic, aes(x = Time, y = Concentration, color = Analyte, group = interaction(Analyte,Participant,Bottle_ID))) +
+  geom_line(size = 1, colour = "grey") +
+  geom_point(size = 4, colour = "blue") +
+  labs(x = "Time (h)", y = "Normalized Concentration (% of T0)") +
+  facet_grid(~Analyte,
+             scales = "free_y",
+              labeller = labeller(
+      Analyte = c(
+        PFOA = "PFOA",
+        diPAP = "6:2 diPAP"
+      ))) +
+  scale_x_continuous(
+  breaks = c(0, 72, 168),
+  expand=expand_scale(mult=c(0,0.1))) +
+  coord_cartesian(clip = "off") +
+  theme_classic() +
+  theme(axis.title.x = element_text(size = 20, face = "bold")) +
+  theme(axis.title.y = element_text(size = 20, face = "bold")) +
+  theme(strip.text.x = element_text(size = 17, face = "bold")) +
+  theme(strip.text.y = element_text(size = 17, face = "bold")) +
+  theme(axis.text.y = element_text(size = 17)) + 
+  theme(axis.text.x = element_text(size = 17)) +
+  theme(legend.position="none")
+
+plot2
+
+```
+
+### Products
+
+#### MonoPAP
+
+```{r}
+monoPAP <- data %>% 
+  select(1:9, 12) %>% 
+  filter(PFAS !="No") %>% #Filer out no PFAS bottles
+  na.omit() %>% 
+  filter(Incubation == "Biotic")
+```
+
+Summary statistics:
+
+```{r}
+monoPAP_summary <- monoPAP %>%
+  dplyr::group_by(Time, pH, Participant) %>%
+  dplyr::summarise(
+    n = dplyr::n(),
+    mean = mean(monoPAP, na.rm = TRUE),
+    se = sd(monoPAP, na.rm = TRUE) / sqrt(n),
+    .groups = "drop"
+  )
+```
+
+Biotic:
+
+```{r}
+monoPAP_summary$pH <- as.factor(monoPAP_summary$pH)
+
+plot3 <- ggplot(monoPAP_summary, aes(x = Time, y = mean, shape = pH, colour = pH)) +
+  geom_point(size = 4) +
+    geom_errorbar(aes(ymin = mean - se,
+                    ymax = mean + se),
+                width = 2,
+                linewidth = 0.6) +
+    scale_color_manual(values = c("2" = "black",
+                                "7" = "hotpink")) +
+  labs(x = "Time (h)", y = "Concentration (ng/mL)", title = "6:2 monoPAP") +
+   scale_x_continuous(
+  breaks = c(0, 4, 8, 24, 72, 168),
+  expand=expand_scale(mult=c(0,0.1))) +
+  coord_cartesian(clip = "off") +
+  geom_hline(
+    yintercept = 1.58,
+    linetype = "dashed"
+  ) +
+  facet_grid(~Participant,
+             labeller = labeller(
+    Participant = c ("A" = "Participant A",
+                     "B" = "Participant B"))) +
+  theme_classic() +
+  theme(axis.title.x = element_text(size = 15, face = "bold")) +
+  theme(axis.title.y = element_text(size = 15, face = "bold")) +
+  theme(axis.text.y = element_text(size = 14)) + 
+  theme(axis.text.x = element_text(size = 14)) +
+  theme(strip.text.x = element_text(size = 13, face = "bold")) +
+  theme(plot.title = element_text(size = 15, face = "bold")) +
+  theme(legend.text = element_text(size = 17),   # Increases legend item text
+    legend.title = element_text(size = 20)  # Increases legend title text
+  )
+
+plot3
+
+```
+
+Abiotic:
+
+```{r}
+monoPAP2 <- data %>% 
+  select(1:9, 12) %>% 
+  filter(PFAS !="No") %>% #Filer out no PFAS bottles
+  na.omit() %>% 
+  filter(Incubation == "Abiotic")
+```
+
+Summary statistics:
+
+```{r}
+monoPAP_summary2 <- monoPAP2 %>%
+  dplyr::group_by(Time, pH, Participant) %>%
+  dplyr::summarise(
+    n = dplyr::n(),
+    mean = mean(monoPAP, na.rm = TRUE),
+    se = sd(monoPAP, na.rm = TRUE) / sqrt(n),
+    .groups = "drop"
+  )
+```
+
+By Participant:
+
+```{r}
+monoPAP_summary2$pH <- as.factor(monoPAP_summary2$pH)
+
+plot3.2 <- ggplot(monoPAP_summary2, aes(x = Time, y = mean, shape = pH, colour = pH)) +
+  geom_point(size = 3.5) +
+    geom_errorbar(aes(ymin = mean - se,
+                    ymax = mean + se),
+                width = 2,
+                linewidth = 0.6) +
+    scale_color_manual(values = c("2" = "black",
+                                "7" = "hotpink")) +
+  labs(x = "Time (h)", y = "Concentration (ng/mL)", title = "6:2 monoPAP") +
+   scale_x_continuous(
+  breaks = c(0, 24, 168),
+  expand=expand_scale(mult=c(0,0.1))) +
+  coord_cartesian(clip = "off") +
+  geom_hline(
+    yintercept = 1.58,
+    linetype = "dashed"
+  ) +
+  facet_grid(~Participant,
+             labeller = labeller(
+    Participant = c ("A" = "Participant A",
+                     "B" = "Participant B"))) +
+  theme_classic() +
+  theme(axis.title.x = element_text(size = 15, face = "bold")) +
+  theme(axis.title.y = element_text(size = 15, face = "bold")) +
+  theme(axis.text.y = element_text(size = 14)) + 
+  theme(axis.text.x = element_text(size = 14)) +
+  theme(strip.text.x = element_text(size = 13, face = "bold")) +
+   theme(plot.title = element_text(size = 15, face = "bold"))
+
+plot3.2
+
+```
+
+#### FTOH
+
+Biotic:
+
+```{r}
+FTOH <- data %>% 
+  select(1:9, 13) %>% 
+  filter(PFAS !="No") %>% #Filer out no PFAS bottles
+  na.omit() %>% 
+  filter(Incubation == "Biotic")
+```
+
+Summary statistics:
+
+```{r}
+FTOH_summary <- FTOH %>%
+  dplyr::group_by(Time, pH, Participant) %>%
+  dplyr::summarise(
+    n = dplyr::n(),
+    mean = mean(FTOH, na.rm = TRUE),
+    se = sd(FTOH, na.rm = TRUE) / sqrt(n),
+    .groups = "drop"
+  )
+```
+
+```{r}
+FTOH_summary$pH <- as.factor(FTOH_summary$pH)
+
+plot4 <- ggplot(FTOH_summary, aes(x = Time, y = mean, shape = pH, colour = pH)) +
+  geom_point(size = 4) +
+    geom_errorbar(aes(ymin = mean - se,
+                    ymax = mean + se),
+                width = 2,
+                linewidth = 0.6) +
+  scale_color_manual(values = c("2" = "black",
+                                "7" = "hotpink")) +
+  labs(x = "Time (h)", y = "Concentration (ng/mL)", title = "6:2 FTOH") +
+   scale_x_continuous(
+  breaks = c(0, 4, 8, 24, 72, 168),
+  expand=expand_scale(mult=c(0,0.1))) +
+  coord_cartesian(clip = "off") +
+  geom_hline(
+    yintercept = 1.60,
+    linetype = "dashed"
+  ) +
+   facet_grid(~Participant,
+             labeller = labeller(
+    Participant = c ("A" = "Participant A",
+                     "B" = "Participant B"))) +
+  theme_classic() +
+  theme(axis.title.x = element_text(size = 15, face = "bold")) +
+  theme(axis.title.y = element_text(size = 15, face = "bold")) +
+  theme(axis.text.y = element_text(size = 14)) + 
+  theme(axis.text.x = element_text(size = 14)) +
+  theme(strip.text.x = element_text(size = 13, face = "bold")) +
+  theme(plot.title = element_text(size = 15, face = "bold")) +
+    theme(strip.background = element_blank())
+
+plot4
+
+```
+
+Abiotic: 
+
+Abiotic
+
+pH x Participant
+
+```{r}
+FTOH2 <- data %>% 
+  select(1:9, 13) %>% 
+  filter(PFAS !="No") %>% #Filer out no PFAS bottles
+  na.omit() %>% 
+  filter(Incubation == "Abiotic")
+```
+
+
+```{r}
+FTOH_summary2 <- FTOH2 %>%
+  dplyr::group_by(Time, pH, Participant) %>%
+  dplyr::summarise(
+    n = dplyr::n(),
+    mean = mean(FTOH, na.rm = TRUE),
+    se = sd(FTOH, na.rm = TRUE) / sqrt(n),
+    .groups = "drop"
+  )
+```
+
+```{r}
+FTOH_summary2$pH <- as.factor(FTOH_summary2$pH)
+
+plot4.2 <- ggplot(FTOH_summary2, aes(x = Time, y = mean, shape = pH, colour = pH)) +
+  geom_point(size = 3.5) +
+    geom_errorbar(aes(ymin = mean - se,
+                    ymax = mean + se),
+                width = 2,
+                linewidth = 0.6) +
+  scale_color_manual(values = c("2" = "black",
+                                "7" = "hotpink")) +
+  labs(x = "Time (h)", y = "Concentration (ng/mL fecal susp.)", title = "6:2 FTOH") +
+   scale_x_continuous(
+  breaks = c(0, 4, 8, 24, 72, 168),
+  expand=expand_scale(mult=c(0,0.1))) +
+  coord_cartesian(clip = "off", ylim = c(0, 0.05)) +
+   geom_hline(
+    yintercept = 1.60,
+    linetype = "dashed"
+  ) +
+   facet_grid(~Participant,
+             labeller = labeller(
+    Participant = c ("A" = "Participant A",
+                     "B" = "Participant B"))) +
+  theme_classic() +
+  theme(axis.title.x = element_text(size = 15, face = "bold")) +
+  theme(axis.title.y = element_text(size = 15, face = "bold")) +
+  theme(axis.text.y = element_text(size = 14)) + 
+  theme(axis.text.x = element_text(size = 14)) +
+  theme(strip.text.x = element_text(size = 13, face = "bold")) +
+  theme(plot.title = element_text(size = 15, face = "bold")) +
+    theme(strip.background = element_blank())
+
+plot4.2
+```
+
+#### PFHxA
+
+Biotic:
+
+```{r}
+PFHxA <- data %>% 
+  select(1:9, 14) %>% 
+  filter(PFAS !="No") %>% #Filer out no PFAS bottles
+  na.omit() %>% 
+  filter(Incubation == "Biotic")
+```
+
+Summary statistics:
+
+```{r}
+PFHxA_summary <- PFHxA %>%
+  dplyr::group_by(Time, pH, Participant) %>%
+  dplyr::summarise(
+    n = dplyr::n(),
+    mean = mean(PFHxA, na.rm = TRUE),
+    se = sd(PFHxA, na.rm = TRUE) / sqrt(n),
+    .groups = "drop"
+  )
+```
+
+```{r}
+PFHxA_summary$pH <- as.factor(PFHxA_summary$pH)
+
+plot5 <- ggplot(PFHxA_summary, aes(x = Time, y = mean, shape = pH, colour = pH)) +
+  geom_point(size = 4) +
+    geom_errorbar(aes(ymin = mean - se,
+                    ymax = mean + se),
+                width = 2,
+                linewidth = 0.6) +
+    scale_color_manual(values = c("2" = "black",
+                                "7" = "hotpink")) +
+  labs(x = "Time (h)", y = "Concentration (ng/mL)", title = "PFHxA") +
+   scale_x_continuous(
+  breaks = c(0, 4, 8, 24, 72, 168),
+  expand=expand_scale(mult=c(0,0.1))) +
+  coord_cartesian(clip = "off") +
+  geom_hline(
+    yintercept = 1.33,
+    linetype = "dashed"
+  ) +
+  facet_grid(~Participant,
+             labeller = labeller(
+    Participant = c ("A" = "Participant A",
+                     "B" = "Participant B"))) +
+  theme_classic() +
+  theme(axis.title.x = element_text(size = 15, face = "bold")) +
+  theme(axis.title.y = element_text(size = 15, face = "bold")) +
+  theme(axis.text.y = element_text(size = 14)) + 
+  theme(axis.text.x = element_text(size = 14)) +
+  theme(strip.text.x = element_text(size = 13, face = "bold")) +
+   theme(plot.title = element_text(size = 15, face = "bold")) +
+    theme(strip.background = element_blank())
+
+plot5
+
+```
+
+Abiotic:
+
+```{r}
+PFHxA2 <- data %>% 
+  select(1:9, 14) %>% 
+  filter(PFAS !="No") %>% #Filer out no PFAS bottles
+  na.omit() %>% 
+  filter(Incubation == "Abiotic")
+```
+
+Summary statistics:
+
+```{r}
+PFHxA_summary2 <- PFHxA2 %>%
+  dplyr::group_by(Time, pH, Participant) %>%
+  dplyr::summarise(
+    n = dplyr::n(),
+    mean = mean(PFHxA, na.rm = TRUE),
+    se = sd(PFHxA, na.rm = TRUE) / sqrt(n),
+    .groups = "drop"
+  )
+```
+
+```{r}
+PFHxA_summary2$pH <- as.factor(PFHxA_summary2$pH)
+
+plot5.2 <- ggplot(PFHxA_summary2, aes(x = Time, y = mean, shape = pH, colour = pH)) +
+  geom_point(size = 3.5) +
+    geom_errorbar(aes(ymin = mean - se,
+                    ymax = mean + se),
+                width = 2,
+                linewidth = 0.6) +
+    scale_color_manual(values = c("2" = "black",
+                                "7" = "hotpink")) +
+  labs(x = "Time (h)", y = "Concentration (ng/mL)", title = "PFHxA") +
+   scale_x_continuous(
+  breaks = c(0, 24, 168),
+  expand=expand_scale(mult=c(0,0.1))) +
+  coord_cartesian(clip = "off") +
+  geom_hline(
+    yintercept = 1.33,
+    linetype = "dashed"
+  ) +
+  facet_grid(~Participant,
+             labeller = labeller(
+    Participant = c ("A" = "Participant A",
+                     "B" = "Participant B"))) +
+  theme_classic() +
+  theme(axis.title.x = element_text(size = 15, face = "bold")) +
+  theme(axis.title.y = element_text(size = 15, face = "bold")) +
+  theme(axis.text.y = element_text(size = 14)) + 
+  theme(axis.text.x = element_text(size = 14)) +
+  theme(strip.text.x = element_text(size = 13, face = "bold")) +
+   theme(plot.title = element_text(size = 15, face = "bold")) +
+    theme(strip.background = element_blank())
+
+plot5.2
+```
+
+#### Combine
+
+Biotic:
+
+```{r}
+plot3_clean <- plot3 +
+  theme(
+    axis.title.x = element_blank(),
+    axis.text.x = element_blank(),
+    axis.ticks.x = element_blank(),
+    axis.title.y = element_blank()
+  )
+
+plot4_clean <- plot4 +
+  theme(
+    axis.text.x = element_blank(),
+    axis.ticks.x = element_blank(),
+    axis.title.x = element_blank(),
+    axis.title.y = element_blank(),
+    strip.background = element_blank(),
+    strip.text.x = element_blank()
+  )
+
+plot5_clean <- plot5 +
+  theme(
+   axis.title.x = element_blank(),
+   axis.title.y = element_blank(),
+   strip.background = element_blank(),
+   strip.text.x = element_blank()
+  )
+
+Products <- ggarrange(
+  plot3_clean, plot4_clean, plot5_clean,
+  labels = c("A)", "B)", "C)"),
+  ncol = 1, nrow = 3,
+  common.legend = TRUE,
+  legend = "top",
+  align = "v"
+)
+
+Products <- annotate_figure(
+  Products,
+  left = text_grob(
+    "Concentration (ng/mL)",
+    rot = 90,
+    size = 20,
+    face = "bold"
+  ),
+  bottom = text_grob(
+    "Time (h)",
+    size = 20,
+    face = "bold"
+  )
+)
+
+Products
+
+```
+
+Abiotic:
+
+```{r}
+Products2 <- ggarrange(plot3.2, plot4.2, plot5.2,
+          labels = c("A)", "B)", "C)"),
+          ncol = 1, nrow = 3,
+          common.legend = TRUE, 
+          legend = "bottom")
+Products2
+
+plot3.2_clean <- plot3.2 +
+  theme(
+    axis.title.x = element_blank(),
+    axis.text.x = element_blank(),
+    axis.ticks.x = element_blank(),
+    axis.title.y = element_blank()
+  )
+
+plot4.2_clean <- plot4.2 +
+  theme(
+    axis.text.x = element_blank(),
+    axis.ticks.x = element_blank(),
+    axis.title.x = element_blank(),
+    axis.title.y = element_blank(),
+    strip.background = element_blank(),
+    strip.text.x = element_blank()
+  )
+
+plot5.2_clean <- plot5.2 +
+  theme(
+   axis.title.x = element_blank(),
+   axis.title.y = element_blank(),
+   strip.background = element_blank(),
+   strip.text.x = element_blank()
+  )
+
+Products2 <- ggarrange(
+  plot3.2_clean, plot4.2_clean, plot5.2_clean,
+  labels = c("A)", "B)", "C)"),
+  ncol = 1, nrow = 3,
+  common.legend = TRUE,
+  legend = "top",
+  align = "v"
+)
+
+Products2 <- annotate_figure(
+  Products2,
+  left = text_grob(
+    "Concentration (ng/mL)",
+    rot = 90,
+    size = 15,
+    face = "bold"
+  ),
+  bottom = text_grob(
+    "Time (h)",
+    size = 15,
+    face = "bold"
+  )
+)
+
+Products2
+```
+
+# Ampliseq - greengenes2 classifer
+
+## Run ampliseq pipeline 
+
+```{bash}
+nextflow run nf-core/ampliseq \
+   -r 2.11.0 \
+   -profile singularity \
+   --input "Peskett_Microbiome_Samplesheet.csv" \
+   --FW_primer GTGYCAGCMGCCGCGGTAA \
+   --RV_primer GGACTACNVGGGTWTCTAAT \
+   --metadata "Peskett_Microbiome_Metadata.txt" \
+   --trunclenf 270 \
+   --trunclenr 270 \
+   --skip_dada_taxonomy \
+   --qiime_ref_taxonomy greengenes2 \
+   --save_intermediates TRUE \
+   --ancom TRUE \
+   --ancombc TRUE \
+   --outdir "./Peskett_Ampliseq_Results"
+```
+
+# Decontam with qiime2
+
+## Set-up
+
+```{bash}
+conda activate qiime2-amplicon-2024.10
+```
+
+## decontam-identify
+
+Running decontam using the prevalence method:
+
+```{bash}
+qiime quality-control decontam-identify \
+--i-table filtered-table.qza \
+--m-metadata-file Peskett_Microbiome_Metadata_decontam.txt \
+--p-method prevalence \
+--p-prev-control-column Sample_or_Control \
+--p-prev-control-indicator control \
+--o-decontam-scores prev_decontam_scores.qza
+```
+
+## decontam-score-viz
+
+```{bash}
+qiime quality-control decontam-score-viz \
+--i-decontam-scores prev_decontam_scores.qza \
+--i-table filtered-table.qza \
+--i-rep-seqs filtered-sequences.qza \
+--p-threshold 0.5 \
+--p-no-weighted \
+--p-bin-size 0.05 \
+--o-visualization decontam_score_viz.qzv
+```
+
+## decontam-remove
+
+```{bash}
+qiime quality-control decontam-remove \
+--i-decontam-scores prev_decontam_scores.qza \
+--i-table filtered-table.qza \
+--i-rep-seqs filtered-sequences.qza \
+--p-threshold 0.5 \
+--o-filtered-table clean-table.qza \
+--o-filtered-rep-seqs clean-rep-seqs.qza
+```
+
+# Remove control samples from cleaned data
+
+Some features belonging to control samples remain because they do not show up in the samples. Therefore, going to filter the data to remove remaining control samples because we are not interested at this moment in analyzing those further. 
+
+Requires metadata file where the first column in the file contains the IDs that should be retained titled "samples-to-keep.txt".
+
+Filter out extraction and sequencing blanks:
+
+```{bash}
+qiime feature-table filter-samples \
+  --i-table clean-table.qza \
+  --m-metadata-file samples-to-keep.txt \
+  --o-filtered-table id-filtered-table.qza
+```
+
+Filter sequences based on new filtered feature table:
+
+```{bash}
+qiime feature-table filter-seqs \
+  --i-data clean-rep-seqs.qza \
+  --i-table id-filtered-table.qza \
+  --o-filtered-data clean-filtered-rep-seqs.qza
+```
+
+# Generate Feature Table Summaries
+
+```{bash}
+qiime feature-table summarize \
+  --i-table id-filtered-table.qza \
+  --o-visualization clean-filtered-table.qzv \
+  --m-sample-metadata-file Peskett_Microbiome_Metadata_decontam.txt
+  
+qiime feature-table tabulate-seqs \
+  --i-data clean-filtered-rep-seqs.qza \
+  --o-visualization clean-filtered-rep-seqs.qzv
+```
+
+# Generate a tree for phylogenetic diversity analyses
+
+```{bash}
+qiime phylogeny align-to-tree-mafft-fasttree \
+  --i-sequences clean-filtered-rep-seqs.qza \
+  --o-alignment aligned-clean-filtered-rep-seqs.qza \
+  --o-masked-alignment masked-aligned-clean-filtered-rep-seqs.qza \
+  --o-tree unrooted-tree.qza \
+  --o-rooted-tree rooted-tree.qza
+```
+
+# Alpha and beta diversity analysis
+
+## Compute core metrics
+
+Need to set sampling-depth using info from feature table - going to set sampling depth to 17,577 since that is the lowest frequency in our samples - sample B8F12
+
+
+```{bash}
+qiime diversity core-metrics-phylogenetic \
+  --i-phylogeny rooted-tree.qza \
+  --i-table id-filtered-table.qza \
+  --p-sampling-depth 17577 \
+  --m-metadata-file Peskett_Microbiome_Metadata_decontam.txt \
+  --output-dir core-metrics-results
+```
+
+Next we will explore the microbial composition of the samples in the context of the sample metadata.
+
+## Test for associations between categorical metadata columns and alpha diversity data. 
+
+Import metadata file for analyses (i.e. does not contain blanks) "Peskett_Microbiome_Metadata_NoBlanks.txt"
+
+```{bash}
+qiime diversity alpha-group-significance \
+  --i-alpha-diversity core-metrics-results/shannon_vector.qza \
+  --m-metadata-file Peskett_Microbiome_Metadata_NoBlanks.txt \
+  --o-visualization shannon-group-significance.qzv
+```
+
+## Test for correlations between alpha diversity and continuous variables
+
+```{bash}
+
+qiime diversity alpha-correlation \
+  --i-alpha-diversity core-metrics-results/shannon_vector.qza \
+  --m-metadata-file Peskett_Microbiome_Metadata_NoBlanks.txt \
+  --o-visualization shannon-correlation-significance.qzv
+```
+
+# Analyze sample composition in the context of categorical metadata using PERMANOVA 
+
+## Unweighted UniFrac distances.
+
+Can pick specific columns in the metadata to analyze:
+
+```{bash}
+
+qiime diversity beta-group-significance \
+  --i-distance-matrix core-metrics-results/unweighted_unifrac_distance_matrix.qza \
+  --m-metadata-file Peskett_Microbiome_Metadata_NoBlanks.txt \
+  --m-metadata-column Participant \
+  --p-pairwise \
+  --o-visualization unweighted-unifrac-participant-group-significance.qzv
+
+qiime diversity beta-group-significance \
+  --i-distance-matrix core-metrics-results/unweighted_unifrac_distance_matrix.qza \
+  --m-metadata-file Peskett_Microbiome_Metadata_NoBlanks.txt \
+  --m-metadata-column pH \
+  --p-pairwise \
+  --o-visualization unweighted-unifrac-pH-group-significance.qzv
+  
+qiime diversity beta-group-significance \
+  --i-distance-matrix core-metrics-results/unweighted_unifrac_distance_matrix.qza \
+  --m-metadata-file Peskett_Microbiome_Metadata_NoBlanks.txt \
+  --m-metadata-column PFAS \
+  --p-pairwise \
+  --o-visualization unweighted-unifrac-PFAS-group-significance.qzv
+  
+qiime diversity beta-group-significance \
+  --i-distance-matrix core-metrics-results/unweighted_unifrac_distance_matrix.qza \
+  --m-metadata-file Peskett_Microbiome_Metadata_NoBlanks.txt \
+  --m-metadata-column Oxygen \
+  --p-pairwise \
+  --o-visualization unweighted-unifrac-oxygen-group-significance.qzv
+
+qiime diversity beta-group-significance \
+  --i-distance-matrix core-metrics-results/unweighted_unifrac_distance_matrix.qza \
+  --m-metadata-file Peskett_Microbiome_Metadata_NoBlanks.txt \
+  --m-metadata-column Sugar \
+  --p-pairwise \
+  --o-visualization unweighted-unifrac-sugar-group-significance.qzv
+
+qiime diversity beta-group-significance \
+  --i-distance-matrix core-metrics-results/unweighted_unifrac_distance_matrix.qza \
+  --m-metadata-file Peskett_Microbiome_Metadata_NoBlanks.txt \
+  --m-metadata-column Bottle \
+  --p-pairwise \
+  --o-visualization unweighted-unifrac-bottle-group-significance.qzv
+```
+
+## Weighted UniFrac
+
+```{bash}
+
+qiime diversity beta-group-significance \
+  --i-distance-matrix core-metrics-results/weighted_unifrac_distance_matrix.qza \
+  --m-metadata-file Peskett_Microbiome_Metadata_NoBlanks.txt \
+  --m-metadata-column Participant \
+  --p-pairwise \
+  --o-visualization weighted-unifrac-participant-group-significance.qzv
+
+qiime diversity beta-group-significance \
+  --i-distance-matrix core-metrics-results/weighted_unifrac_distance_matrix.qza \
+  --m-metadata-file Peskett_Microbiome_Metadata_NoBlanks.txt \
+  --m-metadata-column pH \
+  --p-pairwise \
+  --o-visualization weighted-unifrac-pH-group-significance.qzv
+
+qiime diversity beta-group-significance \
+  --i-distance-matrix core-metrics-results/weighted_unifrac_distance_matrix.qza \
+  --m-metadata-file Peskett_Microbiome_Metadata_NoBlanks.txt \
+  --m-metadata-column PFAS \
+  --p-pairwise \
+  --o-visualization weighted-unifrac-PFAS-group-significance.qzv
+
+qiime diversity beta-group-significance \
+  --i-distance-matrix core-metrics-results/weighted_unifrac_distance_matrix.qza \
+  --m-metadata-file Peskett_Microbiome_Metadata_NoBlanks.txt \
+  --m-metadata-column Oxygen \
+  --p-pairwise \
+  --o-visualization weighted-unifrac-oxygen-group-significance.qzv
+
+qiime diversity beta-group-significance \
+  --i-distance-matrix core-metrics-results/weighted_unifrac_distance_matrix.qza \
+  --m-metadata-file Peskett_Microbiome_Metadata_NoBlanks.txtt \
+  --m-metadata-column Sugar \
+  --p-pairwise \
+  --o-visualization weighted-unifrac-sugar-group-significance.qzv
+  
+```
+
+# Analyze sample composition in the context of continuous metadata
+
+## Create distance matrices from numeric metadata columns
+
+Import metadata file without the starting material samples: "Peskett_Microbiome_Metadata_DistanceMatrix.txt"
+
+Create a distance matrix for each continuous variable column you wish to evaluate: 
+
+```{bash}
+
+qiime metadata distance-matrix \
+  --m-metadata-file Peskett_Microbiome_Metadata_DistanceMatrix.txt \
+  --m-metadata-column TimePoint \
+  --o-distance-matrix distance-matrix-time.qza
+
+## Apply a two-sided Mantel test to identify correlation between two distance matrices
+```
+
+
+### Unweighted UniFrac distances. 
+
+Use --p-intersect_ids to discard mismatches in IDs between matrices and apply the Mantel test to only IDs that are found in both distance matrices.
+
+```{bash}
+qiime diversity mantel \
+  --i-dm1 core-metrics-results/unweighted_unifrac_distance_matrix.qza \
+  --i-dm2 distance-matrix-time.qza \
+  --p-intersect-ids \
+  --o-visualization mantel-unweighted-Unifrac-time.qzv
+```
+
+### Weighted UniFrac
+
+```{bash}
+qiime diversity mantel \
+  --i-dm1 core-metrics-results/weighted_unifrac_distance_matrix.qza \
+  --i-dm2 distance-matrix-time.qza \
+  --p-intersect-ids \
+  --o-visualization mantel-weighted-Unifrac-time.qzv
+```
+
+# Taxonomic Analysis
+
+## Import taxonomy from Ampliseq run
+
+"import" the .tsv file and Convert to .qza:
+
+```{bash}
+qiime tools import \
+  --type 'FeatureData[Taxonomy]' \
+  --input-format TSVTaxonomyFormat \
+  --input-path taxonomy.tsv \
+  --output-path ampliseq-taxonomy.qza
+```
+
+## View the taxonomic composition of the samples with interactive bar plots:
+
+```{bash}
+qiime taxa barplot \
+  --i-table id-filtered-table.qza \
+  --i-taxonomy ampliseq-taxonomy.qza \
+  --m-metadata-file Peskett_Microbiome_Metadata_NoBlanks.txt \
+  --o-visualization taxa-bar-plots.qzv
+```
+
+## Create feature tables with taxonomy instead of feature IDs
+
+```{bash}
+# Phylum Level
+qiime taxa collapse \
+  --i-table id-filtered-table.qza \
+  --i-taxonomy ampliseq-taxonomy.qza \
+  --p-level 2 \
+  --o-collapsed-table phyla-table.qza
+qiime metadata tabulate \
+  --m-input-file phyla-table.qza \
+  --o-visualization phyla-table.qzv
+
+# Class 
+qiime taxa collapse \
+  --i-table id-filtered-table.qza \
+  --i-taxonomy ampliseq-taxonomy.qza \
+  --p-level 3 \
+  --o-collapsed-table class-table.qza 
+qiime metadata tabulate \
+  --m-input-file class-table.qza \
+  --o-visualization class-table.qzv
+
+# Order
+qiime taxa collapse \
+  --i-table id-filtered-table.qza \
+  --i-taxonomy ampliseq-taxonomy.qza \
+  --p-level 4 \
+  --o-collapsed-table order-table.qza 
+qiime metadata tabulate \
+  --m-input-file order-table.qza \
+  --o-visualization order-table.qzv
+
+# Family
+qiime taxa collapse \
+  --i-table id-filtered-table.qza \
+  --i-taxonomy ampliseq-taxonomy.qza \
+  --p-level 5 \
+  --o-collapsed-table family-table.qza 
+qiime metadata tabulate \
+  --m-input-file family-table.qza \
+  --o-visualization family-table.qzv
+
+# Genus
+qiime taxa collapse \
+  --i-table id-filtered-table.qza \
+  --i-taxonomy ampliseq-taxonomy.qza \
+  --p-level 6 \
+  --o-collapsed-table genus-table.qza 
+qiime metadata tabulate \
+  --m-input-file genus-table.qza \
+  --o-visualization genus-table.qzv
+
+# Species
+qiime taxa collapse \
+  --i-table id-filtered-table.qza \
+  --i-taxonomy ampliseq-taxonomy.qza \
+  --p-level 7 \
+  --o-collapsed-table species-table.qza 
+qiime metadata tabulate \
+  --m-input-file species-table.qza \
+  --o-visualization species-table.qzv
+```
+
+Export tables as .tsv files:
+
+```{bash}
+
+#Phylum
+qiime tools export \
+--input-path phyla-table.qza \
+--output-path export/phyla-table
+
+biom convert -i export/phyla-table/feature-table.biom \
+-o export/phyla-table/phyla-feature-table.tsv --to-tsv
+
+#Class
+qiime tools export \
+--input-path class-table.qza \
+--output-path export/class-table
+
+biom convert -i export/class-table/feature-table.biom \
+-o export/class-table/class-feature-table.tsv --to-tsv
+
+#Order
+qiime tools export \
+--input-path order-table.qza \
+--output-path export/order-table
+
+biom convert -i export/order-table/feature-table.biom \
+-o export/order-table/order-feature-table.tsv --to-tsv
+
+#Family
+qiime tools export \
+--input-path family-table.qza \
+--output-path export/family-table
+
+biom convert -i export/family-table/feature-table.biom \
+-o export/family-table/family-feature-table.tsv --to-tsv
+
+#Genus
+qiime tools export \
+--input-path genus-table.qza \
+--output-path export/genus-table
+
+biom convert -i export/genus-table/feature-table.biom \
+-o export/genus-table/genus-feature-table.tsv --to-tsv
+
+#Species
+qiime tools export \
+--input-path species-table.qza \
+--output-path export/species-table
+
+biom convert -i export/species-table/feature-table.biom \
+-o export/species-table/species-feature-table.tsv --to-tsv
+```
+
+# Compute relative abundances
+
+```{bash}
+
+# Phylum
+qiime feature-table relative-frequency \
+--i-table phyla-table.qza \
+--o-relative-frequency-table rel-phyla-table.qza
+qiime metadata tabulate \
+  --m-input-file rel-phyla-table.qza \
+  --o-visualization rel-phyla-table.qzv
+  
+# Class
+qiime feature-table relative-frequency \
+--i-table class-table.qza \
+--o-relative-frequency-table rel-class-table.qza
+qiime metadata tabulate \
+  --m-input-file rel-class-table.qza \
+  --o-visualization rel-class-table.qzv
+  
+# Order
+qiime feature-table relative-frequency \
+--i-table order-table.qza \
+--o-relative-frequency-table rel-order-table.qza
+qiime metadata tabulate \
+  --m-input-file rel-order-table.qza \
+  --o-visualization rel-order-table.qzv
+  
+# Family
+qiime feature-table relative-frequency \
+--i-table family-table.qza \
+--o-relative-frequency-table rel-family-table.qza
+qiime metadata tabulate \
+  --m-input-file rel-family-table.qza \
+  --o-visualization rel-family-table.qzv
+  
+# Genus
+qiime feature-table relative-frequency \
+--i-table genus-table.qza \
+--o-relative-frequency-table rel-genus-table.qza
+qiime metadata tabulate \
+  --m-input-file rel-genus-table.qza \
+  --o-visualization rel-genus-table.qzv
+
+# Species
+qiime feature-table relative-frequency \
+--i-table species-table.qza \
+--o-relative-frequency-table rel-species-table.qza
+qiime metadata tabulate \
+  --m-input-file rel-species-table.qza \
+  --o-visualization rel-species-table.qzv
+```
+
+Export tables as .tsv files:
+
+```{bash}
+
+#Phylum
+qiime tools export \
+--input-path rel-phyla-table.qza \
+--output-path export/rel-phyla-table
+
+biom convert -i export/rel-phyla-table/feature-table.biom \
+-o export/rel-phyla-table/phyla-rel-table.tsv --to-tsv
+
+#Class
+qiime tools export \
+--input-path rel-class-table.qza \
+--output-path export/rel-class-table
+
+biom convert -i export/rel-class-table/feature-table.biom \
+-o export/rel-class-table/class-rel-table.tsv --to-tsv
+
+#Order
+qiime tools export \
+--input-path rel-order-table.qza \
+--output-path export/rel-order-table
+
+biom convert -i export/rel-order-table/feature-table.biom \
+-o export/rel-order-table/order-rel-table.tsv --to-tsv
+
+#Family
+qiime tools export \
+--input-path rel-family-table.qza \
+--output-path export/rel-family-table
+
+biom convert -i export/rel-family-table/feature-table.biom \
+-o export/rel-family-table/family-rel-table.tsv --to-tsv
+
+#Genus
+qiime tools export \
+--input-path rel-genus-table.qza \
+--output-path export/rel-genus-table
+
+biom convert -i export/rel-genus-table/feature-table.biom \
+-o export/rel-genus-table/genus-rel-table.tsv --to-tsv
+
+#Species
+qiime tools export \
+--input-path rel-species-table.qza \
+--output-path export/rel-species-table
+
+biom convert -i export/rel-species-table/feature-table.biom \
+-o export/rel-species-table/species-rel-table.tsv --to-tsv
+```
+
+# Data Visualizations
+
+Load in the metadata file used in qiime2: 
+
+```{r}
+metadata<- read.delim("Peskett_Microbiome_Metadata_NoBlanks.txt", dec = ".")
+
+#Change ID column to sampleID and filter out blanks and NTC
+
+metadata <- metadata %>%
+  dplyr::rename(sampleID = ID)
+```
+
+## Diversity Figures
+
+Import shannon index qiime artifact
+
+```{r}
+shannon <- read_qza("quiime2-Outputs/Diversity/core-metrics-results/shannon_vector.qza")$data %>% rownames_to_column("sampleID") 
+```
+
+Check that sampleID matches metadata:
+
+```{r}
+gplots::venn(list(metadata=metadata$sampleID, shannon=shannon$sampleID)) 
+```
+
+### Unweighted Unifrac PCoA
+
+Load in qiime artifact:
+
+```{r}
+unweighted <- read_qza("quiime2-Outputs/Diversity/core-metrics-results/unweighted_unifrac_pcoa_results.qza")
+```
+
+Prior to creating static PCoA plots, the proportion of variance explained by axes 1 and 2 in the unweighted unifrac analyses needs to be manually extracted:
+
+```{r}
+unweighted_PC1<-signif(unweighted$data$ProportionExplained$PC1, digits = 4)
+unweighted_PC2<-signif(unweighted$data$ProportionExplained$PC2, digits = 4)
+```
+
+Create an ordination plot using Unweighted UniFrac measurement to visualize beta diversity:
+
+Plot 1 will have participant as the colour and pH as the shape
+
+```{r}
+#Create visual theme here and edit as needed for presentation purposes
+
+PCoA_theme<- theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(), 
+               panel.background = element_blank(), axis.line = element_line(colour = "black"),
+               axis.text.x = element_text(color = "black", size = 14),
+               axis.text.y = element_text(color = "black", size = 14),
+               axis.title.x = element_text(color = "black", size = 16),
+               axis.title.y = element_text(color = "black", size = 16),
+               legend.title=element_text(size=16), 
+               legend.text=element_text(size=16),
+               legend.key = element_rect(fill = "white", color = NA),
+               plot.title = element_text(size = 20, face = "bold"),
+               panel.border = element_rect(colour = "black", fill=NA, size=1))
+
+#unweighted unifrac beta diversity ordination visualization script
+unweighted_ordination <-
+  unweighted$data$Vectors %>%
+  select(SampleID, PC1, PC2) %>% # different formatting here for sampleID name, convert in next step
+  dplyr::rename(sampleID = SampleID) %>%
+  left_join(metadata) %>%
+  left_join(shannon) %>%
+  dplyr::rename(`Shannon Index` = shannon_entropy) %>% 
+  dplyr::rename(`Time Point` = TimePoint)
+```
+
+Plot will have Participant as the colour, pH as the shape, TimePoint as the size:
+
+```{r}
+# Order the Time Point variable properly:
+
+unweighted_ordination$`Time Point` <- factor(unweighted_ordination$`Time Point`,
+                                             levels = c( "Starting_Material", "8", "24", "72"))
+# Make Plot:
+
+unweightedplot <- unweighted_ordination %>% 
+  ggplot(aes(x=PC1, y=PC2, colour = Participant, shape = pH, size =`Time Point`)) +
+  geom_point(alpha= 0.8) + #alpha controls transparency and helps when points are overlapping
+  scale_color_brewer(palette = "Dark2") +
+    scale_size_discrete(
+  labels = c("Starting_Material" = "Starting Material",
+             "8" = "8",
+             "24" = "24",
+             "72" = "72")) +
+  scale_shape_discrete(
+  labels = c("Starting_Material" = "Starting Material",
+             "pH2" = "pH 2",
+             "pH7" = "pH 7")) +
+  labs(title = "Unweighted UniFrac", 
+       x = paste(paste("PC1", unweighted_PC1*100), "%"), y = paste(paste("PC2", unweighted_PC2*100), "%")) +
+  PCoA_theme +
+  guides(
+    colour = guide_legend(order = 1, override.aes = list(size = 4)),
+    size   = guide_legend(order = 2),
+    shape  = guide_legend(order = 3, override.aes = list(size = 4))) +
+  geom_vline(aes(xintercept=0), color="black",
+             linetype="dashed") +
+  geom_hline(aes(yintercept = 0), color="black",
+             linetype="dashed")
+
+unweightedplot
+```
+
+#### PFAS versus Controls
+
+```{r}
+unweighted_ordination$PFAS <- factor(unweighted_ordination$PFAS,
+                                             levels = c( "Starting_Material", "Yes", "No"))
+
+unweightedplot2 <- unweighted_ordination %>% 
+  ggplot(aes(x=PC1, y=PC2, colour = PFAS, shape = Participant, size =`Time Point`)) +
+  geom_point(alpha= 0.8) + #alpha controls transparency and helps when points are overlapping
+  scale_color_brewer(palette = "Dark2") +
+  labs(title = "Unweighted UniFrac", 
+       x = paste(paste("PC1", unweighted_PC1*100), "%"), y = paste(paste("PC2", unweighted_PC2*100), "%")) +
+  PCoA_theme +
+  guides(colour = guide_legend(override.aes = list(size=4)),
+         shape = guide_legend(override.aes = list(size = 4)))
+
+unweightedplot2
+```
+
+### Weighted Unifrac PCoA
+
+Load in qiime artifact:
+
+```{r}
+weighted <- read_qza("quiime2-Outputs/Diversity/core-metrics-results/weighted_unifrac_pcoa_results.qza")
+```
+
+Prior to creating static PCoA plots, the proportion of variance explained by axes 1 and 2 in the unweighted unifrac analyses needs to be manually extracte:
+
+```{r}
+weighted_PC1<-signif(weighted$data$ProportionExplained$PC1, digits = 4)
+weighted_PC2<-signif(weighted$data$ProportionExplained$PC2, digits = 4)
+```
+
+Create an ordination plot using weighted UniFrac measurement to visualize beta diversity:
+
+```{r}
+#weighted unifrac beta diversity ordination visualization script
+weighted_ordination <-
+  weighted$data$Vectors %>%
+  select(SampleID, PC1, PC2) %>% # different formatting here for sampleID name, convert in next step
+  dplyr::rename(sampleID = SampleID) %>%
+  left_join(metadata) %>%
+  left_join(shannon) %>%
+  dplyr::rename(`Shannon Index` = shannon_entropy) %>% 
+  dplyr::rename(`Time Point` = TimePoint)
+
+weighted_ordination$`Time Point` <- as.factor(unweighted_ordination$`Time Point`)
+
+weighted_ordination$`Time Point` <- factor(weighted_ordination$`Time Point`,
+                                             levels = c( "Starting_Material", "8", "24", "72"))
+
+weightedplot <- weighted_ordination %>% 
+  ggplot(aes(x=PC1, y=PC2, colour = Participant, shape = pH, size =`Time Point`)) +
+  geom_point(alpha= 0.8) + #alpha controls transparency and helps when points are overlapping
+  scale_color_brewer(palette = "Dark2") +
+  scale_size_discrete(
+  labels = c("Starting_Material" = "Starting Material",
+             "8" = "8",
+             "24" = "24",
+             "72" = "72")) +
+  scale_shape_discrete(
+  labels = c("Starting_Material" = "Starting Material",
+             "pH2" = "pH 2",
+             "pH7" = "pH 7")) +
+  labs(title = "Weighted UniFrac", 
+       x = paste(paste("PC1", weighted_PC1*100), "%"), y = paste(paste("PC2", weighted_PC2*100), "%")) +
+  PCoA_theme +
+  guides(
+    colour = guide_legend(order = 1, override.aes = list(size = 4)),
+    size   = guide_legend(order = 2),
+    shape  = guide_legend(order = 3, override.aes = list(size = 4)))
+
+weightedplot
+```
+
+#### PFAS versus Controls
+
+```{r}
+weighted_ordination$PFAS <- factor(weighted_ordination$PFAS,
+                                             levels = c( "Starting_Material", "Yes", "No"))
+weightedplot2 <- weighted_ordination %>% 
+  ggplot(aes(x=PC1, y=PC2, colour = PFAS, shape = Participant, size =`Time Point`)) +
+  geom_point(alpha= 0.8) + #alpha controls transparency and helps when points are overlapping
+  scale_color_brewer(palette = "Dark2") +
+  labs(title = "Weighted UniFrac", 
+       x = paste(paste("PC1", weighted_PC1*100), "%"), y = paste(paste("PC2", weighted_PC2*100), "%")) +
+  PCoA_theme +
+  guides(colour = guide_legend(override.aes = list(size=4)),
+         shape = guide_legend(override.aes = list(size = 4)))
+
+weightedplot2
+
+```
+
+### Chemistry vectors
+
+#### Unweighted
+
+Prepare data for envfit()
+```{r}
+#Add chemistry data to abundance data
+chemdata2 <- data %>%
+  dplyr::rename(sampleID = Sample_ID)
+
+combined_df <- unweighted_ordination %>%
+  left_join(chemdata2 %>%
+      select(sampleID, PFOA, diPAP, FTOH, PFHxA, monoPAP),
+    by = "sampleID")
+
+#Define PFAS columns 
+
+pfas_cols <- c("diPAP", "PFOA", "PFHxA", "monoPAP", "FTOH")
+
+#Select relevant columns and drop NAs
+
+combined_df <- combined_df %>% 
+  dplyr::select(sampleID, PC1, PC2, all_of(pfas_cols)) %>% 
+  drop_na()
+
+#Use sampleID as rownames for both matrices
+
+rownames(combined_df) <- combined_df$sampleID
+
+ordination_matrix <- combined_df %>% 
+  select(PC1, PC2) %>% 
+  as.matrix()
+
+pfas_matrix <- combined_df %>% 
+  select(all_of(pfas_cols)) %>% 
+  as.matrix()
+
+#Check dimensions
+
+stopifnot(nrow(ordination_matrix) == nrow(pfas_matrix))
+
+#Run envfit
+
+fit <- envfit(ordination_matrix, pfas_matrix, permutations = 999)
+```
+
+Extract significant vectors from fit:
+
+```{r}
+#Extract vector scores and p-values
+vector_scores <- scores(fit, display = "vectors")
+pvals <- fit$vectors$pvals
+
+#Create data frame with vectors
+vector_df <- as.data.frame(vector_scores)
+vector_df$pfas <- rownames(vector_df)
+vector_df$pval <- pvals
+
+#Keep only significant vectors and scale for better visualization
+signif_vectors <- vector_df %>% 
+  filter(pval <= 0.05) %>% 
+  mutate(PC1 = PC1 * 0.5, PC2 = PC2 * 0.5)
+```
+
+Overlay vectors on existing ggplot:
+```{r}
+unweightedplot_overlay <- unweightedplot +
+  geom_segment(data = signif_vectors,
+               aes(x = 0, y = 0, xend = PC1, yend = PC2),
+               arrow = arrow(length = unit(0.3, "cm")),
+               color = "black", size = 1, inherit.aes = FALSE) +
+  geom_text(data = signif_vectors,
+            aes(x = PC1, y = PC2, label = pfas),
+            color = "black", size = 5, inherit.aes = FALSE) +
+    geom_vline(aes(xintercept=0), color="black",
+             linetype="dashed") +
+  geom_hline(aes(yintercept = 0), color="black",
+             linetype="dashed")
+  
+unweightedplot_overlay
+```
+
+#### Weighted
+
+Prepare data for envfit()
+```{r}
+combined_df2 <- weighted_ordination %>%
+  left_join(chemdata2 %>%
+      select(sampleID, PFOA, diPAP, FTOH, PFHxA, monoPAP),
+    by = "sampleID")
+
+#Select relevant columns and drop NAs
+
+combined_df2 <- combined_df2 %>% 
+  dplyr::select(sampleID, PC1, PC2, all_of(pfas_cols)) %>% 
+  drop_na()
+
+#Use sampleID as rownames for both matrices
+
+rownames(combined_df2) <- combined_df2$sampleID
+
+ordination_matrix2 <- combined_df2 %>% 
+  select(PC1, PC2) %>% 
+  as.matrix()
+
+pfas_matrix2 <- combined_df2 %>% 
+  select(all_of(pfas_cols)) %>% 
+  as.matrix()
+
+#Check dimensions
+
+stopifnot(nrow(ordination_matrix2) == nrow(pfas_matrix2))
+
+#Run envfit
+
+fit2 <- envfit(ordination_matrix2, pfas_matrix2, permutations = 999)
+```
+
+Extract significant vectors from fit:
+
+```{r}
+#Extract vector scores and p-values
+vector_scores2 <- scores(fit2, display = "vectors")
+pvals2 <- fit2$vectors$pvals
+
+#Create data frame with vectors
+vector_df2 <- as.data.frame(vector_scores2)
+vector_df2$pfas <- rownames(vector_df2)
+vector_df2$pval <- pvals2
+
+#Keep only significant vectors and scale for better visualization
+signif_vectors2 <- vector_df2 %>% 
+  filter(pval <= 0.05) %>% 
+  mutate(PC1 = PC1 * 0.5, PC2 = PC2 * 0.5)
+```
+
+Overlay vectors on existing ggplot:
+```{r}
+weightedplot_overlay <- weightedplot +
+  geom_segment(data = signif_vectors2,
+               aes(x = 0, y = 0, xend = PC1, yend = PC2),
+               arrow = arrow(length = unit(0.3, "cm")),
+               color = "black", size = 1, inherit.aes = FALSE) +
+  geom_text(data = signif_vectors2,
+            aes(x = PC1, y = PC2, label = pfas),
+            color = "black", size = 5, inherit.aes = FALSE) +
+    geom_vline(aes(xintercept=0), color="black",
+             linetype="dashed") +
+  geom_hline(aes(yintercept = 0), color="black",
+             linetype="dashed")
+  
+weightedplot_overlay
+```
+
+### Combined Figures
+
+```{r}
+combine2 <- ggarrange(unweightedplot_overlay, weightedplot_overlay,
+                      labels = c("A)", "B)"),
+                      common.legend = TRUE, legend = "right")
+combine2
+
+```
+
+## Relative-Abundance Heat-map
+
+### Family Levels
+
+```{r}
+metadata<- read.delim("Peskett_Microbiome_Metadata_NoBlanks.txt", dec = ".")
+
+#Change ID column to sampleID and filter out blanks and NTC
+
+metadata <- metadata %>%
+  dplyr::rename(sampleID = ID)
+```
+
+Import shannon index qiime artifact
+
+```{r}
+shannon <- read_qza("quiime2-Outputs/Diversity/core-metrics-results/shannon_vector.qza")$data %>% rownames_to_column("sampleID") 
+```
+
+```{r}
+rel_family_table <- fread("quiime2-Outputs/export/rel-family-table/family-rel-table.tsv", sep = "\t", header = "auto")
+rel_family_table2 <- rel_family_table %>% 
+                      dplyr::rename(classification = `#OTU ID`) %>%
+                      separate(classification, 
+                                                     into = c("Kingdom", 
+                                                             "Phylum",
+                                                             "Class",
+                                                             "Order",
+                                                             "Family"), sep = ";") %>%
+                          
+                                            #Phylum
+                                            mutate(Phylum = str_replace(string = Phylum,
+                                                              pattern = "p__",
+                                                              replacement = "")) %>%
+                                            mutate(Phylum = str_replace(string = Phylum,
+                                                              pattern = "(.*)",
+                                                              replacement = "*\\1*")) %>%
+                                            #Class
+                                            mutate(Class = str_replace(string = Class,
+                                                              pattern = "c__",
+                                                              replacement = "")) %>%
+                                            mutate(Class = str_replace(string = Class,
+                                                              pattern = "(.*)",
+                                                              replacement = "*\\1*")) %>%
+                
+                                            #Order
+                                            mutate(Order = str_replace(string = Order,
+                                                              pattern = "o__",
+                                                              replacement = "")) %>%
+                                            mutate(Order = str_replace(string = Order,
+                                                              pattern = "(.*)",
+                                                              replacement = "*\\1*")) %>%
+                
+                                            #Family
+                                            mutate(Family = str_replace(string = Family,
+                                                              pattern = "f__",
+                                                              replacement = "")) %>%
+                                            mutate(Family = str_replace(string = Family,
+                                                              pattern = "(.*)",
+                                                              replacement = "*\\1*")) %>%
+
+                                            #Unknowns
+                                            mutate(Family = str_replace(string = Family, 
+                                                            pattern = "__",
+                                                            replacement = "*Unidentified family*")) %>%
+  
+                                            mutate(Phylum = str_replace(string = Phylum, 
+                                                            pattern = "__",
+                                                            replacement = "*Unidentified phylum*")) %>%
+  
+                                            #Generate collated labels
+                                            mutate(Phylum_family = glue("{Phylum}, {Family}")) %>%
+                                            relocate(Phylum_family, .after=Family)
+```
+
+Filter out any Eukaryotic and Unassigned sequences and then run the gather function to convert this from a wide to a long data format better suited to data visualization. Use case_when to reproduce the Material names originally present in the metadata file in addition to any other relevant information to facilitate adding additional layers of information in the visualization.
+
+```{r}
+#Data clean up and reorganization
+rel_family_heatmap <- rel_family_table2 %>%
+                        filter(!Kingdom == "Unassigned" & !Kingdom == "d__Eukaryota") %>% #filter out unassigned and eukaryotic sequences
+                        gather(key = `sampleID`, value = `Relative abundance`, "B24F10":"MStool", na.rm=FALSE) %>%
+                        mutate(`Relative abundance` = `Relative abundance` *100) #convert decimals to percent
+
+# Add in metadata
+
+rel_family_heatmap_meta <- merge(rel_family_heatmap, metadata, by = "sampleID")
+
+rel_family_heatmap_meta2  <- rel_family_heatmap_meta  %>% 
+  mutate(
+    sampleID2 = sampleID) %>% 
+  mutate(sampleID2 = str_replace_all(sampleID, c("F" = "A", "M" = "B")))
+```
+
+```{r}
+#Create aesthetic theme
+heatmap_theme<-  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(), 
+                 panel.background = element_blank(), axis.line = element_line(colour = "black"),
+                 axis.text.x = element_text(color = "black", size = 10),
+                 axis.text.y = element_text(color = "black", size = 10),
+                 axis.title.x = element_text(color = "black", size = 12, vjust = -3),
+                 axis.title.y = element_text(color = "black", size = 12, vjust = 6),
+                 legend.title=element_text(size=12, vjust = 2), 
+                 legend.text=element_text(size=12),
+                 legend.key = element_rect(fill = "white", color = NA),
+                 plot.title = element_text(size = 12, face = "bold", hjust = 0.5),
+                 panel.border = element_rect(colour = "black", fill=NA, size=1),
+                 plot.margin = unit(c(0.5, 0.5, 0.5, 0.5), "cm"))
+```
+
+#### PFAS treatment samples only
+
+```{r}
+participant_labeller <- as_labeller(c(
+  "A" = "Participant A",
+  "B" = "Participant B"
+))
+
+rel_family_heatmap_meta2$TimePoint <- factor(rel_family_heatmap_meta2$TimePoint, levels = c( "Starting_Material", "8", "24", "72"))
+
+rel_family_heatmap_pfas <- rel_family_heatmap_meta2 %>% 
+   mutate(
+    pH = as.character(pH),
+    TimePoint = as.character(TimePoint)
+  )
+
+rel_family_heatmap_pfas <- rel_family_heatmap_pfas %>% 
+  mutate(
+    pH = ifelse(pH == "Starting_Material", "N/A", pH),
+    TimePoint = ifelse(TimePoint == "Starting_Material", "N/A", TimePoint)
+  ) %>% 
+  filter(PFAS != "No")
+
+rel_family_heatmap_pfas$TimePoint <- factor(rel_family_heatmap_pfas$TimePoint, 
+                                            levels = c( "N/A", "8", "24", "72"))
+
+rel_family_heatmap_pfas$sampleID2 <- factor(rel_family_heatmap_pfas$sampleID2,
+                                             levels = c( "AStool","B8A1",
+                                                         "B8A2",
+                                                         "B8A3", "B8A4",
+                                                         "B8A5", "B8A6",
+                                                         "B8A7", "B8A8",
+                                                         "B24A1", "B24A2",
+                                                         "B24A3", "B24A4",
+                                                         "B24A5", "B24A6",
+                                                         "B24A7", "B24A8",
+                                                         "B72A1", "B72A2",
+                                                         "B72A3", "B72A4",
+                                                         "B72A5", "B72A6",
+                                                         "B72A7", "B72A8",
+                                                         "BStool","B8B1",
+                                                         "B8B2",
+                                                         "B8B3", "B8B4",
+                                                         "B8B5", "B8B6",
+                                                         "B8B7", "B8B8",
+                                                         "B24B1", "B24B2",
+                                                         "B24B3", "B24B4",
+                                                         "B24B5", "B24B6",
+                                                         "B24B7", "B24B8",
+                                                         "B72B1", "B72B2",
+                                                         "B72B3", "B72B4",
+                                                         "B72B5", "B72B6",
+                                                         "B72B7", "B72B8"))
+
+rel_family_heatmap_pfas_only <- rel_family_heatmap_pfas %>%
+                                  filter(`Relative abundance` >= 1) %>%     #add cut off value bigger or equal to here 
+  ggplot(aes(x= sampleID2, y = reorder(Phylum_family, `Relative abundance`), fill= `Relative abundance`)) +
+                                  geom_tile(aes()) + 
+                                  facet_nested(~ Participant + pH + TimePoint, 
+                                               scales = "free", space = "free", labeller = labeller(Participant = participant_labeller)) +
+                                  theme(axis.text.x=element_text(angle=0, hjust=1),
+                                  axis.title.y = element_text(color = "black", size = 15, vjust = 0),
+                                  legend.key.size = unit(2, 'cm'))+
+                                  scale_fill_viridis_c(name="Relative abundance (%)", 
+                                                      na.value = "white", limits = c(0, 100)) + #set to max relative abundance rounded up
+                                  labs(
+                                  x = "Sample ID" , y = "Phylum, family name") +
+                                  heatmap_theme +
+                                  theme(axis.text.x = element_text(color = "black", size = 10, face = "bold", hjust = 0.5, vjust = 0.2, angle = 90),
+                                        axis.text.y = element_markdown(size = 10, face = "bold"),
+                                        axis.title.x = element_markdown(color = "black", size = 12, face = "bold"),
+                                        axis.title.y = element_text(color = "black", size = 12, face = "bold"),
+                                        strip.text.x = element_text(color = "black", size = 10, face = "bold"))
+
+rel_family_heatmap_pfas_only
+```
+
+#### Controls version
+
+```{r}
+rel_family_heatmap_no_pfas <- rel_family_heatmap_meta2 %>% 
+   mutate(
+    pH = as.character(pH),
+    TimePoint = as.character(TimePoint)
+  )
+
+rel_family_heatmap_no_pfas <- rel_family_heatmap_no_pfas %>% 
+  mutate(
+    pH = ifelse(pH == "Starting_Material", "N/A", pH),
+    TimePoint = ifelse(TimePoint == "Starting_Material", "N/A", TimePoint)
+  ) %>% 
+  filter(PFAS != "Yes")
+
+rel_family_heatmap_no_pfas$TimePoint <- factor(rel_family_heatmap_no_pfas$TimePoint, 
+                                            levels = c( "N/A", "8", "24", "72"))
+
+rel_family_heatmap_no_pfas$sampleID2 <- factor(rel_family_heatmap_no_pfas$sampleID2,
+                                             levels = c( "AStool","B8A9",
+                                                         "B8A10",
+                                                         "B8A11", "B8A12",
+                                                         "B8A13", "B8A14",
+                                                         "B8A15", "B8A16",
+                                                         "B24A9", "B24A10",
+                                                         "B24A11", "B24A12",
+                                                         "B24A13", "B24A14",
+                                                         "B24A15", "B24A16",
+                                                         "B72A9", "B72A10",
+                                                         "B72A11", "B72A12",
+                                                         "B72A13", "B72A14",
+                                                         "B72A15", "B72A16",
+                                                         "BStool","B8B9",
+                                                         "B8B10",
+                                                         "B8B11", "B8B12",
+                                                         "B8B13", "B8B14",
+                                                         "B8B15", "B8B16",
+                                                         "B24B9", "B24B10",
+                                                         "B24B11", "B24B12",
+                                                         "B24B13", "B24B14",
+                                                         "B24B15", "B24B16",
+                                                         "B72B9", "B72B10",
+                                                         "B72B11", "B72B12",
+                                                         "B72B13", "B72B14",
+                                                         "B72B15", "B72B16"))
+
+rel_family_heatmap_no_pfas_plot <- rel_family_heatmap_no_pfas %>%
+                                  filter(`Relative abundance` >= 1) %>%     #add cut off value bigger or equal to here 
+  ggplot(aes(x= sampleID2, y = reorder(Phylum_family, `Relative abundance`), fill= `Relative abundance`)) +
+                                  geom_tile(aes()) + 
+                                  facet_nested(~ Participant + pH + TimePoint, 
+                                               scales = "free", space = "free", labeller = labeller(Participant = participant_labeller)) +
+                                  theme(axis.text.x=element_text(angle=0, hjust=1),
+                                  axis.title.y = element_text(color = "black", size = 15, vjust = 0),
+                                  legend.key.size = unit(2, 'cm'))+
+                                  scale_fill_viridis_c(name="Relative abundance (%)", 
+                                                      na.value = "white", limits = c(0, 100)) + #set to max relative abundance rounded up
+                                  labs(
+                                  x = "Sample ID" , y = "Phylum, family name") +
+                                  heatmap_theme +
+                                  theme(axis.text.x = element_text(color = "black", size = 10, face = "bold", hjust = 0.5, vjust = 0.2, angle = 90),
+                                        axis.text.y = element_markdown(size = 10, face = "bold"),
+                                        axis.title.x = element_markdown(color = "black", size = 12, face = "bold"),
+                                        axis.title.y = element_text(color = "black", size = 12, face = "bold"),
+                                        strip.text.x = element_text(color = "black", size = 10, face = "bold"))
+
+rel_family_heatmap_no_pfas_plot
+```
+
+#### Combine
+
+```{r}
+combine <- ggarrange(rel_family_heatmap_no_pfas_plot, rel_family_heatmap_pfas_only,
+                      labels = c("A) Control", "B) PFAS"), nrow = 2, 
+                      heights = c(1,1), common.legend = TRUE, legend = "right")
+combine
+```
+
+## Chemistry x Microbial Data
+
+### Hierarchical Clustering Correlation Matrix
+
+Construct correlation matrix:
+
+```{r}
+#Filter data to only include PFAS samples
+family_corr_matrix <- rel_family_heatmap_meta2 %>%
+  filter(PFAS == "Yes") %>%
+  select(sampleID, sampleID2, Phylum_family, `Relative abundance`,)
+
+#Add chemistry data to abundance data
+family_corr_matrix2 <- family_corr_matrix %>%
+  left_join(chemdata2 %>%
+      select(sampleID, PFOA, diPAP, FTOH, PFHxA, monoPAP),
+    by = "sampleID")
+
+# Filter for families that had at least 1 relative abundance measure hit or exceed 1% 
+filtered_data <- family_corr_matrix2 %>%
+  group_by(Phylum_family) %>%
+  filter(any(`Relative abundance` >= 1)) %>%
+  ungroup() 
+
+family_corr_matrix2 <- filtered_data %>% 
+  pivot_wider(
+    names_from = Phylum_family,
+    values_from = `Relative abundance`,
+    values_fn = mean 
+  ) 
+
+#Remove columns with all zeros
+family_corr_matrix2 <- family_corr_matrix2[, colSums(family_corr_matrix2 != 0, na.rm = TRUE) > 0]
+
+#Define compound columns 
+compound_vars <- c("monoPAP", "PFOA", "diPAP", "FTOH", "PFHxA")
+
+# Extract family names from column names (those that are NOT compound_vars or sampleID)
+families <- setdiff( names(family_corr_matrix2),c(compound_vars2, "sampleID", "sampleID2"))
+
+# Initialize correlation matrix
+cor_matrix <- matrix(NA, 
+                      nrow = length(families), 
+                      ncol = length(compound_vars),
+                      dimnames = list(families, compound_vars))
+
+# Initialize p-values matrix
+p_matrix <- matrix(
+  1,
+  nrow = length(families),
+  ncol = length(compound_vars),
+  dimnames = list(families, compound_vars)
+)
+
+# Compute correlations
+for (fam in families) {
+  for (compound in compound_vars) {
+
+    x <- family_corr_matrix2[[fam]]
+    y <- family_corr_matrix2[[compound]]
+
+    # Spearman correlation
+    cor_matrix[fam, compound] <- cor(
+      x, y,
+      method = "spearman",
+      use = "complete.obs"
+    )
+
+    # P-value (safe handling of constant vectors)
+    if (length(unique(x)) < 2 || length(unique(y)) < 2) {
+      p_matrix[fam, compound] <- 1
+    } else {
+      p_matrix[fam, compound] <- suppressWarnings(
+        cor.test(x, y, method = "spearman", exact = FALSE)$p.value
+      )
+    }
+  }
+}
+
+cor_long <- as.data.frame(cor_matrix)
+cor_long$Phylum_Family <- rownames(cor_long)
+cor_long <- cor_long %>%
+  pivot_longer(cols = -Phylum_Family, names_to = "Compound", values_to = "Correlation")
+
+p_long <- as.data.frame(p_matrix)
+p_long$Phylum_Family <- rownames(p_long)
+
+p_long <- p_long %>%
+  pivot_longer(
+    cols = -Phylum_Family,
+    names_to = "Compound",
+    values_to = "p_value"
+  )
+
+#Join p-values to correlation data
+
+cor_long <- cor_long %>%
+  left_join(
+    p_long,
+    by = c("Phylum_Family", "Compound")
+  )
+
+#Add FDR correction per family
+
+cor_long <- cor_long %>%
+  group_by(Compound) %>%
+  mutate(p_fdr = p.adjust(p_value, method = "fdr")) %>%
+  ungroup()
+
+#Add stars
+
+cor_long <- cor_long %>%
+  mutate(sig = case_when(
+    p_fdr < 0.001 ~ "***",
+    p_fdr < 0.01  ~ "**",
+    p_fdr < 0.05  ~ "*",
+    TRUE          ~ ""
+  ))
+
+```
+
+Hierarchical clustering:
+
+```{r}
+# Convert to matrix with families as rows and compounds as columns:
+
+cor_mat <- cor_long %>%
+  select(Phylum_Family, Correlation, Compound) %>% 
+  pivot_wider(names_from = Compound, values_from = Correlation) %>%
+  column_to_rownames("Phylum_Family") %>%
+  as.matrix()
+
+# Create stars matrix
+
+sig_mat <- cor_long %>%
+  select(Phylum_Family, sig, Compound) %>% 
+  pivot_wider(names_from = Compound, values_from = sig) %>%
+  column_to_rownames("Phylum_Family") %>%
+  as.matrix()
+
+# Remove asterisks and commas
+rownames(cor_mat) <- gsub("[\\*,]", "", rownames(cor_mat))
+colnames(cor_mat) <- gsub("[\\*,]", "", colnames(cor_mat))  # optional, if needed
+rownames(sig_mat) <- gsub("[\\*,]", "", rownames(sig_mat))
+colnames(sig_mat) <- gsub("[\\*,]", "", colnames(sig_mat))
+
+# Generate clustered heat map:
+
+corrplot <- pheatmap(cor_mat,
+         cluster_rows = TRUE,
+         cluster_cols = TRUE,
+         color = colorRampPalette(c("#440154", "#21908C", "#FDE725"))(50),
+         breaks = seq(-1, 1, length.out = 51),
+         border_color = NA,
+         display_numbers = sig_mat,
+         number_color = "black",
+         fontsize_number = 10)
+
+corrplot
+
+```
+
+# Longread Bioinformatics
+
+## Nanophase
+
+```{bash}
+conda activate nanophase
+```
+
+Run workflow for each sequence:
+
+```{bash}
+nanophase meta -l LongRead_B-72-F-16.fastq.gz -t 8 -o Nanophase_B-72-F-16 -e global
+
+nanophase meta -l LongRead_B-72-F-8.fastq.gz -t 40 -o Nanophase_B-72-F-8 -e global
+
+nanophase meta -l LongRead_B-72-M-16.fastq.gz -t 40 -o Nanophase_B-72-M-16 -e global
+
+nanophase meta -l LongRead_B-72-M-8.fastq.gz -t 40 -o Nanophase_B-72-M-8 -e global
+```
+
+## De-replicate genomes using dRep
+
+```{bash}
+conda activate dRep
+```
+
+```{bash}
+dRep dereplicate output_directory -g path/to/genomes/*.fasta -comp 70 -con 10 -sa 0.98 -p 20
+```
+
+##DRAM annotations
+
+```{bash}
+conda activate DRAM_conda
+```
+
+Annotate with custom databases included:
+
+```{bash}
+DRAM.py annotate -i '/path/to/dereplicated_genomes/*.fasta' \
+-o /path/to/outputdirectory \
+--use_uniref \
+--custom_fasta_loc /path/to/PFASDB_FASTA.fasta \
+--custom_db_name PFASDB \
+--custom_fasta_loc /path/to/RDaseDB_FASTA.fasta \
+--custom_db_name RDaseDB \
+--threads 40
+```
+
+Run the distill command once the annotation is complete:
+
+```{bash}
+DRAM.py distill -i /path/to/annotations.tsv -o /path/to/outputdirectory --trna_path /path/to/trnas.tsv --rrna_path /path/to/rrnas.tsv
+```
+
+## Run GTDB-Tk for taxonomic classification and phylogenetic trees
+
+```{bash}
+conda activate gtdbtk-2.4.0
+```
+
+```{bash}
+gtdbtk classify_wf --genome_dir /path/to/dereplicated_genomes --extension fasta --out_dir /path/to/outputdirectory --cpus 40 --pplacer_cpus 40 --skip_ani_screen
+```
+
+## Run Sylph
+
+```{bash}
+conda activate sylph
+```
+
+Sketch single end long reads:
+
+```{bash}
+sylph sketch -r *.fastq.gz -d /path/to/Sylph_Sketches -t 40
+```
+
+Create a sylph database from the high quality MAGs:
+
+```{bash}
+sylph sketch /path/to/dereplicated_genomes/*.fasta -o /path/to/outputdirectory/MAG_sylph_database -t 40 -c 200
+```
+
+Download the gtdb-tk database form the Sylph authors:
+
+```{bash}
+wget http://faust.compbio.cs.cmu.edu/sylph-stuff/gtdb-r220-c200-dbv1.syldb
+```
+
+Run Sylph:
+
+```{bash}
+sylph profile /path/to/MAG_sylph_database.syldb /path/to/Sylph_sketches_directory/*.sylsp  -t 40 -o /path/to/output_directory/sylph_results.tsv
+```
+
+## SqueezeMeta
+
+```{bash}
+conda activate SqueezeMeta_dev
+```
+
+When running in sequential mode you can specify the external assembly file for each sample in the sample file.
+
+Example:
+
+Sample1 readfileD_1.fastq pair1 extassembly=/path/to/extassembly 
+
+Need to provide the proper mapper - minimap2 
+Using minimap2-ont for Oxford Nanopore Technologies (ONT) reads
+
+```{bash}
+SqueezeMeta.pl \
+-m sequential \
+-s /path/to/SampleList.txt \
+-f /path/to/raw_fastq_directory \
+-c 1000 \
+-map minimap2-ont \
+-binners concoct,metabat2,maxbin \
+-extdb /path/to/custom_database_list.txt \
+-t 40
+```
+
+Then, will want to re-run the functional annotation portion with a minimum identity value of 50:
+
+Project names: B-72-F-8, B-72-F-16, B-72-M-8, B-72-M-16
+
+Started with project name: B-72-F-16
+
+Edited the parameters.pl file to increase the minimum identity from 30% to 50%.
+
+Editing the parameters.pl files:
+
+```{bash}
+#Make a back-up copy of each file
+
+cp parameters.pl parameters_backup.pl
+
+#open file
+
+vi parameters.pl 
+
+#Steps for editing:
+
+#Press i to enter Insert mode.
+#Use the arrow keys to make changes (e.g., $DB_NAME = 'newdb';).
+#Press Esc to exit Insert mode.
+#Type :wq and press Enter to save and quit.
+```
+
+After you finish editing the two files restart the SqueezeMeta run at Step 7. Functional Assignment:
+
+```{bash}
+
+#B-72-F-16
+
+SqueezeMeta.pl \
+-p B-72-F-16 \
+--restart \
+-step 7 \
+--force_overwrite
+
+#B-72-F-8
+
+SqueezeMeta.pl \
+-p B-72-F-8 \
+--restart \
+-step 7 \
+--force_overwrite
+
+#B-72-M-16
+
+SqueezeMeta.pl \
+-p B-72-M-16 \
+--restart \
+-step 7 \
+--force_overwrite
+
+#B-72-M-8
+
+SqueezeMeta.pl \
+-p B-72-M-8 \
+--restart \
+-step 7 \
+--force_overwrite
+
+# Create Zip files using sqm2zip.py
+```
+
+
+# Longread Visualizations
+
+## Relative abundance heat map
+
+### Species/bin level
+
+```{r}
+#Create aesthetic theme
+heatmap_theme<-  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(), 
+                 panel.background = element_blank(), axis.line = element_line(colour = "black"),
+                 axis.text.x = element_text(color = "black", size = 12),
+                 axis.text.y = element_text(color = "black", size = 12),
+                 axis.title.x = element_text(color = "black", size = 15, vjust = -3, face = "bold"),
+                 axis.title.y = element_text(color = "black", size = 15, vjust = 6, face = "bold"),
+                 legend.title=element_text(size=15, vjust = 2), 
+                 legend.text=element_text(size=12),
+                 legend.key = element_rect(fill = "white", color = NA),
+                 plot.title = element_text(size = 15, face = "bold", hjust = 0.5),
+                 panel.border = element_rect(colour = "black", fill=NA, size=1),
+                 plot.margin = unit(c(2, 2, 2, 2), "cm"))
+```
+
+
+```{r}
+MAG_taxonomic_abundance_heatmap_species_bin_no_cutoff <-  Sylph_GTDB_outputs_combined %>%
+                                                    ggplot(aes(x= Sample_ID, y = reorder(Species_bin, Taxonomic_abundance), fill= Taxonomic_abundance)) +
+                                                    geom_tile(aes()) + 
+                                                    facet_nested(~Treatment + Participant, 
+                                                                 scales = "free", space = "free", labeller = labeller(Participant = participant_labeller)) +
+                                                    theme(axis.text.x=element_text(angle=0, hjust=1),
+                                                    axis.title.y = element_text(color = "black", size = 12, vjust = 0),
+                                                    legend.key.size = unit(2, 'cm'))+
+                                                    scale_fill_viridis_c(name="Relative abundance (%)", 
+                                                                        na.value = "white", limits = c(0, 95)) + #set to max relative abundance rounded up
+                                                    labs(
+                                                    x = "Sample ID" , y = "MAG ID") +
+                                                    heatmap_theme +
+                                                    theme(axis.text.x = element_text(color = "black", size = 12, face = "bold", hjust = 0.5, angle = 0),
+                                                          axis.text.y = element_markdown(size = 12, face = "bold"),
+                                                          axis.title.x = element_text(color = "black", size = 15, face = "bold"),
+                                                          strip.text.x = element_text(color = "black", size = 15, face = "bold"))
+
+
+MAG_taxonomic_abundance_heatmap_species_bin_no_cutoff
+```
+
+### Family level
+
+```{r}
+family_abundance <- Sylph_GTDB_outputs_combined %>%
+  group_by(Sample_ID, Treatment, Participant, Family) %>%
+  summarise(
+    Taxonomic_abundance = sum(Taxonomic_abundance, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+MAG_taxonomic_abundance_heatmap_family_no_cutoff <-  family_abundance %>%
+                                                    ggplot(aes(x= Sample_ID, y = reorder(Family, Taxonomic_abundance), fill= Taxonomic_abundance)) +
+                                                    geom_tile(aes()) + 
+                                                    facet_nested(~Treatment + Participant, 
+                                                                 scales = "free", space = "free", labeller = labeller(Participant = participant_labeller)) +
+                                                    theme(axis.text.x=element_text(angle=0, hjust=1),
+                                                    axis.title.y = element_text(color = "black", size = 12, vjust = 0),
+                                                    legend.key.size = unit(2, 'cm'))+
+                                                    scale_fill_viridis_c(name="Relative abundance (%)", 
+                                                                        na.value = "white", limits = c(0, 100)) + #set to max relative abundance rounded up
+                                                    labs(
+                                                    x = "Sample ID" , y = "Family name") +
+                                                    heatmap_theme +
+                                                    theme(axis.text.x = element_text(color = "black", size = 12, face = "bold", hjust = 0.5, angle = 0),
+                                                          axis.text.y = element_markdown(size = 12, face = "bold"),
+                                                          axis.title.x = element_text(color = "black", size = 15, face = "bold"),
+                                                          strip.text.x = element_text(color = "black", size = 15, face = "bold"))
+
+
+MAG_taxonomic_abundance_heatmap_family_no_cutoff
+
+```
+
+## PFAS Genes Presence/Absence
+
+Load in DRAM annotations
+```{r}
+DRAM_annotations <- fread("annotations.tsv", sep = "\t", header = "auto") #68921 observations
+head(DRAM_annotations)
+
+DRAM_annotations<- DRAM_annotations %>% 
+  dplyr::rename(genome = fasta) 
+```
+
+Filter PFASDB using some more strict cut-offs:
+
+```{r}
+Quality_PFASDB_annotations <- DRAM_annotations %>%
+                                      filter(PFASDB_identity >= 0.5 & PFASDB_eVal <= 1e-3 & PFASDB_bitScore >= 100) #148 observations
+```
+
+Remove ID from the PFAS gene label in order to group genes into categories
+
+Load in annotation summary info to add short form for the genes and added a gene column to the DRAM annotation file:
+
+```{r}
+PFASDB_summary <- read.csv("PFASDB_merged_Annotation_Info.csv")
+
+Quality_PFASDB_annotations_categories <-
+  Quality_PFASDB_annotations %>%
+   mutate(Gene_name = str_remove(PFASDB_hit, fixed(PFASDB_id))) %>% 
+  mutate(Entry = str_remove(PFASDB_id, "^.*_")) %>% 
+  left_join(
+    PFASDB_summary %>% select(Entry, Gene),
+    by = "Entry"
+  ) %>%
+  dplyr::rename(PFAS_gene = Gene)
+```
+
+Load in DRAM product and connect to Sylph and GTDB combined dataframe:
+
+```{r}
+DRAM_product <- fread("product.tsv", sep = "\t", header = "auto") 
+
+DRAM_product_joined <- left_join(Sylph_GTDB_outputs_combined, DRAM_product, by = "genome")
+```
+
+Left join the taxonomy and relative abundance data
+```{r}
+
+DRAM_product_PFAS_genomes <- DRAM_product_joined %>%
+                         left_join(Quality_PFASDB_annotations_categories) %>% 
+                                mutate(PFAS_gene_present = if_else(!is.na(PFAS_gene),
+                                                                   "Present", "Absent")) %>%
+                                relocate(c(Taxonomic_abundance, PFAS_gene, PFAS_gene_present),
+                                         .after = "genome") #relocate the taxonomy, relative abundance, and PFAS gene data to the first columns for ease of reference
+```
+
+Plot:
+
+```{r}
+PFAS_gene_presence_absence_heatmap <-  DRAM_product_PFAS_genomes %>%
+  mutate(Species_bin_ordered = reorder(Species_bin, Taxonomic_abundance)) %>%
+  tidyr::complete(
+    Species_bin_ordered,
+    PFAS_gene,
+    fill = list(PFAS_gene_present = NA)
+  ) %>%
+  ggplot(aes(x = PFAS_gene, y = Species_bin_ordered, fill = PFAS_gene_present)) +
+  geom_tile(aes()) + 
+  scale_fill_manual(
+    name = "Gene presence",
+    values = c("Present" = "darkgreen", "Absent" = "turquoise"),
+    na.value = "turquoise", breaks = c("Present", "Absent")) + 
+  scale_x_discrete(na.translate = FALSE) + #Keep NAs in data, but don't show them on the x-axis
+  scale_x_discrete(drop = FALSE) +
+  scale_y_discrete(drop = FALSE) +
+  labs(x = "", y = "MAG ID") +
+  heatmap_theme +
+  theme(
+    axis.text.x = element_text(size = 15, face = "bold", angle = 90, hjust = 1, vjust = 0.5),
+    axis.text.y = element_markdown(size = 15, face = "bold")
+  )
+
+PFAS_gene_presence_absence_heatmap
+```
+
+Join the relative abundance and the PFAS gene presence/absence data, preserving both y-axes initially to double check organization prior to making final figure:
+
+```{r}
+PFAS_gene_presence_absence_heatmap_no_y <-  PFAS_gene_presence_absence_heatmap +
+                                                                theme(axis.text.y = element_blank(),
+                                                                      axis.title.y = element_blank())
+
+MAG_taxonomic_abundance_heatmap_species_bin_no_cutoff_no_title <- MAG_taxonomic_abundance_heatmap_species_bin_no_cutoff + 
+                                                            theme(plot.title = element_blank()) 
+
+# Left plot: MAG taxonomic abundance
+MAG_left <- MAG_taxonomic_abundance_heatmap_species_bin_no_cutoff_no_title +
+  theme(
+    plot.margin = margin(t = 5, r = 2, b = 50, l = 40, unit = "pt")  # increase bottom margin
+  )
+
+
+# Right plot: PFAS gene presence/absence
+PFAS_right <- PFAS_gene_presence_absence_heatmap_no_y +
+  labs(x = "Gene") +  # ensure x-axis title is set
+  theme(
+    axis.text.y = element_blank(),       # hide y-axis labels
+    axis.title.y = element_blank(),      # hide y-axis title
+    plot.margin = margin(t = 5, r = 5, b = 50, l = 2, unit = "pt"),  # enough space for x-axis title
+    axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5, size = 12),
+    axis.title.x = element_text(size = 15, face = "bold")  # style the title
+  ) +
+  scale_x_discrete(labels = function(x) str_wrap(x, width = 10))
+
+# Combine with patchwork
+combined_heatmap <- MAG_left + PFAS_right +
+  plot_layout(ncol = 2, widths = c(2, 1), guides = 'collect') &
+  theme(legend.position = "right")
+
+combined_heatmap
+```
+
+## Conjugation Genes
+
+```{r}
+# Filter for conjugation - related genes
+conjugation <- DRAM_annotations %>% 
+  filter(ko_id %in% c("K01023", "K00799", "K12999")) %>%
+  mutate(conjugation_gene_present = "Present")
+
+#join with DRAM porduct
+DRAM_product_conjugation_genomes <- DRAM_product_joined %>%
+  left_join(
+    conjugation %>% 
+      select(genome, ko_id, conjugation_gene_present),
+    by = "genome"
+  ) %>% 
+  mutate(
+    conjugation_gene_present = replace_na(
+      conjugation_gene_present, "Absent"
+    )
+  ) %>% 
+  relocate(
+    c(Taxonomic_abundance, ko_id, conjugation_gene_present),
+    .after = "genome"
+  )
+```
+
+Plot:
+
+```{r}
+conjugation_gene_presence_absence_heatmap <-  DRAM_product_conjugation_genomes %>%
+  mutate(Species_bin_ordered = reorder(Species_bin, Taxonomic_abundance)) %>%
+  tidyr::complete(
+    Species_bin_ordered,
+    ko_id,
+    fill = list(conjugation_gene_present = NA)
+  ) %>%
+  ggplot(aes(x = ko_id, y = Species_bin_ordered, fill = conjugation_gene_present)) +
+  geom_tile(aes()) + 
+  scale_fill_manual(
+    name = "Gene presence",
+    values = c("Present" = "darkgreen", "Absent" = "turquoise"),
+    na.value = "turquoise", breaks = c("Present", "Absent")) + #Keep NAs in data, but don't show them on the x-axis
+  scale_x_discrete(drop = FALSE) +
+  scale_y_discrete(drop = FALSE) +
+  labs(x = "", y = "MAG ID") +
+  heatmap_theme +
+  theme(
+    axis.text.x = element_text(size = 15, face = "bold", angle = 90, hjust = 1, vjust = 0.5),
+    axis.text.y = element_markdown(size = 15, face = "bold")
+  ) + 
+  scale_x_discrete(na.translate = FALSE) 
+
+conjugation_gene_presence_absence_heatmap
+```
+
+## ALP gene
+
+```{r}
+# Filter for ap - related genes
+alp <- DRAM_annotations %>% 
+  filter(ko_id %in% c("K01077")) %>%
+  mutate(alp_gene_present = "Present")
+
+#join with DRAM porduct
+DRAM_product_alp_genomes <- DRAM_product_joined %>%
+  left_join(
+    alp %>% 
+      select(genome, ko_id, alp_gene_present),
+    by = "genome"
+  ) %>% 
+  mutate(
+    alp_gene_present = replace_na(
+      alp_gene_present, "Absent"
+    )
+  ) %>% 
+  relocate(
+    c(Taxonomic_abundance, ko_id, alp_gene_present),
+    .after = "genome"
+  )
+```
+
+Plot:
+
+```{r}
+alp_gene_presence_absence_heatmap <-  DRAM_product_alp_genomes %>%
+  mutate(Species_bin_ordered = reorder(Species_bin, Taxonomic_abundance)) %>%
+  tidyr::complete(
+    Species_bin_ordered,
+    ko_id,
+    fill = list(alp_gene_present = NA)
+  ) %>%
+  ggplot(aes(x = ko_id, y = Species_bin_ordered, fill = alp_gene_present)) +
+  geom_tile(aes()) + 
+  scale_fill_manual(
+    name = "Gene presence",
+    values = c("Present" = "darkgreen", "Absent" = "turquoise"),
+    na.value = "turquoise", breaks = c("Present", "Absent")) + #Keep NAs in data, but don't show them on the x-axis
+  scale_x_discrete(drop = FALSE) +
+  scale_y_discrete(drop = FALSE) +
+  labs(x = "", y = "MAG ID") +
+  heatmap_theme +
+  theme(
+    axis.text.x = element_text(size = 15, face = "bold", angle = 90, hjust = 1, vjust = 0.5),
+    axis.text.y = element_markdown(size = 15, face = "bold")
+  ) + 
+  scale_x_discrete(na.translate = FALSE) 
+
+alp_gene_presence_absence_heatmap
+```
+
+
+## Combine conjugation and AP plots
+
+Join the relative abundance and the PFAS gene presence/absence data, preserving both y-axes initially to double check organization prior to making final figure.
+
+```{r}
+conjugation_presence_absence_heatmap_no_y <-  conjugation_gene_presence_absence_heatmap +
+                                                                theme(axis.text.y = element_blank(),
+                                                                      axis.title.y = element_blank())
+conjugation_presence_absence_heatmap_no_y
+
+# Left plot: MAG taxonomic abundance
+MAG_left <- MAG_taxonomic_abundance_heatmap_species_bin_no_cutoff_no_title +
+  theme(
+    plot.margin = margin(t = 5, r = 2, b = 50, l = 40, unit = "pt")  # increase bottom margin
+  )
+
+# Right plot: gene presence/absence
+conjugation_right <- conjugation_presence_absence_heatmap_no_y +
+  labs(x = "KEGG ID") +  # ensure x-axis title is set
+  theme(
+    axis.text.y = element_blank(),       # hide y-axis labels
+    axis.title.y = element_blank(),      # hide y-axis title
+    plot.margin = margin(t = 5, r = 5, b = 50, l = 2, unit = "pt"),  # enough space for x-axis title
+    axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5, size = 12),
+    axis.title.x = element_text(size = 15, face = "bold")  # style the title
+  ) +
+  scale_x_discrete(labels = function(x) str_wrap(x, width = 10)) + 
+  scale_x_discrete(na.translate = FALSE) 
+
+# Third plot: alkaline phosphatase gene presence/absence
+alp_right <- alp_gene_presence_absence_heatmap +
+  labs(x = NULL) +   # remove KEGG ID label
+  theme(
+    axis.text.y = element_blank(),
+    axis.title.y = element_blank(),
+    plot.margin = margin(t = 5, r = 5, b = 50, l = 2, unit = "pt"),
+    axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5, size = 12)
+  ) +
+  scale_x_discrete(
+    labels = function(x) rep("Alkaline phosphatase", length(x)),
+    na.translate = FALSE
+  )
+
+# Combine all three
+combined_heatmap2 <- MAG_left + conjugation_right + alp_right +
+  plot_layout(
+    ncol = 3,
+    widths = c(2, 0.75, 0.25),   # AP panel narrower than conjugation
+    guides = "collect"
+  ) &
+  theme(legend.position = "right",
+        legend.margin = margin(t = 20, r = 5, b = 5, l = 5))
+
+combined_heatmap2
+```
+
+# SqueezeMeta
+
+Load in combined SQM object:
+
+```{r}
+Squeezemeta_combined_data <- readRDS("Squeezemeta_combined_data.rds")
+```
+
+Change the sample IDs to reflect the Participant labels:
+
+```{r}
+Squeezemeta_combined_data2 <- Squeezemeta_combined_data
+
+#Abundance
+#See what the column names are currently:
+
+colnames(Squeezemeta_combined_data2$taxa$family$abund) 
+
+# Change column names:
+
+colnames(Squeezemeta_combined_data2$taxa$family$abund) <- c("B-72-A-8", "B-72-A-16", "B-72-B-8", "B-72-B-16")
+
+colnames(Squeezemeta_combined_data2$taxa$family$abund)
+
+#Percent
+#See what the column names are currently:
+
+colnames(Squeezemeta_combined_data2$taxa$family$percent) 
+
+# Change column names:
+
+colnames(Squeezemeta_combined_data2$taxa$family$percent) <- c("B-72-A-8", "B-72-A-16", "B-72-B-8", "B-72-B-16")
+
+```
+
+### Taxonomy
+
+Plot taxanomy and divide based on PFAS and Control
+
+```{r}
+taxplot <- plotTaxonomy(Squeezemeta_combined_data2, rank = 'family', count ='percent', metadata_groups = list('Control' = c('B-72-A-16','B-72-B-16'),'PFAS' = c('B-72-A-8','B-72-B-8')))
+
+taxplot
+```
+
+### Functional annotations
+
+```{r}
+# KEGG
+
+colnames(Squeezemeta_combined_data2$functions$KEGG$cpm) <- c("B-72-A-8", "B-72-A-16", "B-72-B-8", "B-72-B-16")
+
+KEGGplot <- plotFunctions(Squeezemeta_combined_data2, fun_level = 'KEGG',  count = 'cpm', metadata_groups = list('Control' = c('B-72-A-16','B-72-B-16'),'PFAS' = c('B-72-A-8','B-72-B-8')))
+  
+KEGGplot
+
+# RDaseDB
+
+colnames(Squeezemeta_combined_data2$functions$RDaseDB$cpm) <- c("B-72-A-8", "B-72-A-16", "B-72-B-8", "B-72-B-16")
+
+RDaseplot <- plotFunctions(Squeezemeta_combined_data2, fun_level = 'RDaseDB', N = 10, count = 'cpm', metadata_groups = list('Control' = c('B-72-A-16','B-72-B-16'),'PFAS' = c('B-72-A-8','B-72-B-8')))
+  
+RDaseplot
+
+# PFASDB
+
+#cpm
+
+colnames(Squeezemeta_combined_data2$functions$PFASDB$cpm) <- c("B-72-A-8", "B-72-A-16", "B-72-B-8", "B-72-B-16")
+
+PFASDBplot <- plotFunctions(Squeezemeta_combined_data2, fun_level = 'PFASDB', count = 'cpm', metadata_groups = list('Control' = c('B-72-A-16','B-72-B-16'),'PFAS' = c('B-72-A-8','B-72-B-8')))
+  
+PFASDBplot
+```
+
+### Subset functions:
+
+```{r}
+Squeezemeta_combined_data_benD = subsetFun(Squeezemeta_combined_data2, "_benD_", fixed = FALSE)
+
+colnames(Squeezemeta_combined_data_benD$functions$PFASDB$cpm) <- c("B-72-A-8", "B-72-A-16", "B-72-B-8", "B-72-B-16")
+
+benDplot <- plotFunctions(Squeezemeta_combined_data_benD, fun_level = 'PFASDB', count = 'cpm', metadata_groups = list('Control' = c('B-72-A-16','B-72-B-16'),'PFAS' = c('B-72-A-8','B-72-B-8')))
+
+benDplot
+```
